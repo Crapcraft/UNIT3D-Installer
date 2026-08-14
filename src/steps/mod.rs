@@ -46,3 +46,35 @@ impl StepRunner {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steps_ordered_is_complete_and_in_order() {
+        let names: Vec<&str> = Steps::ordered().iter().map(|s| s.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "Validating Installer Policies",
+                "Server Setup",
+                "Redis Setup & Configurations",
+                "Prerequisites",
+                "Configuring & Securing Database",
+                "PHP & PHP-FPM Configuration",
+                "Nginx Setup & Configurations",
+                "UNIT3D-Community-Edition Settings and Configuration",
+                "Meilisearch Setup & Configuration",
+                "Finalizing Install (credentials file)",
+            ]
+        );
+    }
+
+    #[test]
+    fn ordered_steps_are_all_send_sync() {
+        // The `Vec<Box<dyn Step>>` must satisfy Send + Sync (Step: Send + Sync).
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Vec<Box<dyn Step>>>();
+    }
+}

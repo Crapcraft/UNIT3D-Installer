@@ -118,3 +118,43 @@ pub fn print_summary(cfg: &Config) {
     println!("  Echo Port    : {}", cfg.app.echo_port);
     println!();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_interactive_text_returns_default() {
+        let p = Prompter::new(true);
+        assert_eq!(p.text("Q", "default-value").unwrap(), "default-value");
+        assert_eq!(p.text("Q", "").unwrap(), "");
+    }
+
+    #[test]
+    fn non_interactive_password_is_empty() {
+        let p = Prompter::new(true);
+        assert_eq!(p.password("PW").unwrap(), "");
+    }
+
+    #[test]
+    fn non_interactive_confirm_returns_default() {
+        let p = Prompter::new(true);
+        assert!(p.confirm("OK?", true).unwrap());
+        assert!(!p.confirm("OK?", false).unwrap());
+    }
+
+    #[test]
+    fn non_interactive_select_returns_default_index() {
+        let p = Prompter::new(true);
+        let items = ["a", "b", "c"];
+        assert_eq!(p.select("Pick", &items, 2).unwrap(), 2);
+        assert_eq!(p.select("Pick", &items, 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn text_required_errors_when_empty_in_non_interactive() {
+        let p = Prompter::new(true);
+        assert!(p.text_required("Q", "").is_err());
+        assert_eq!(p.text_required("Q", "filled").unwrap(), "filled");
+    }
+}

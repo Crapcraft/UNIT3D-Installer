@@ -45,4 +45,27 @@ mod tests {
         }
         0
     }
+
+    #[test]
+    fn no_memtotal_line_returns_zero() {
+        let text = "MemFree: 123 kB\nMemAvailable: 456 kB\n".to_string();
+        assert_eq!(parse_for_test(text), 0);
+    }
+
+    #[test]
+    fn empty_input_returns_zero() {
+        assert_eq!(parse_for_test(String::new()), 0);
+    }
+
+    #[test]
+    fn garbage_memtotal_returns_zero() {
+        let text = "MemTotal: not-a-number kB\n".to_string();
+        assert_eq!(parse_for_test(text), 0);
+    }
+
+    #[test]
+    fn multiline_handling_picks_memtotal() {
+        let text = "MemTotal:       8192000 kB\nMemFree:  100 kB\n".to_string();
+        assert_eq!(parse_for_test(text), 8_192_000);
+    }
 }

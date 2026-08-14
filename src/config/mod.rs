@@ -429,4 +429,88 @@ mod tests {
         // Unset fields still fall back to defaults.
         assert_eq!(cfg.app.db_driver, DbDriver::MariaDb);
     }
+
+    #[test]
+    fn db_driver_mappings() {
+        assert_eq!(DbDriver::Mysql.as_db_connection(), "mysql");
+        assert_eq!(DbDriver::MariaDb.as_db_connection(), "mariadb");
+        assert_eq!(DbDriver::Postgres.as_db_connection(), "pgsql");
+
+        assert_eq!(DbDriver::Mysql.package(), "mysql-server");
+        assert_eq!(DbDriver::MariaDb.package(), "mariadb-server");
+        assert_eq!(DbDriver::Postgres.package(), "postgresql");
+
+        assert_eq!(DbDriver::Mysql.admin_binary(), "mysql");
+        assert_eq!(DbDriver::MariaDb.admin_binary(), "mariadb");
+        assert_eq!(DbDriver::Postgres.admin_binary(), "psql");
+    }
+
+    #[test]
+    fn serde_db_driver_roundtrip_pascal_case() {
+        // Confirm the PascalCase rename works from TOML input.
+        let cfg: Config = toml::from_str(
+            r#"
+            [app]
+            db_driver = "Postgres"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.app.db_driver, DbDriver::Postgres);
+    }
+
+    #[test]
+    fn default_software_has_core_packages() {
+        let sw = SoftwareSection::default();
+        for key in [
+            "nginx",
+            "mariadb-server",
+            "redis-server",
+            "supervisor",
+            "certbot",
+            "git",
+            "unzip",
+        ] {
+            assert!(sw.packages.contains_key(key), "missing package {key}");
+        }
+        // Every package has a non-empty description.
+        for (pkg, desc) in &sw.packages {
+            assert!(!desc.is_empty(), "package {pkg} has empty description");
+        }
+    }
+
+    #[test]
+    fn default_php_extensions_for_85() {
+        let exts = SoftwareSection::default().php_extensions;
+        assert!(exts.contains(&"php8.5-fpm".to_string()));
+        assert!(exts.contains(&"php8.5-mysql".to_string()));
+        assert!(exts.contains(&"php8.5-pgsql".to_string()));
+        assert!(exts.contains(&"php8.5-opcache".to_string()));
+        // No duplicates.
+        let mut sorted = exts.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), exts.len());
+    }
+
+    #[test]
+    fn unit3d_defaults_pin_tag() {
+        let cfg = Config::default();
+        assert_eq!(
+            cfg.unit3d.repository,
+            "https://github.com/HDInnovations/UNIT3D-Community-Edition.git"
+        );
+        assert_eq!(cfg.unit3d.tag, "v9.2.0");
+        assert_eq!(cfg.unit3d.min_php_version, "8.5");
+        assert_eq!(cfg.app.echo_port, 8443);
+        assert!(cfg.app.ssl);
+        assert_eq!(cfg.os.ubuntu.web_user, "www-data");
+        assert_eq!(cfg.os.ubuntu.install_dir, PathBuf::from("/var/www/html"));
+    }
+
+    #[test]
+    fn config_path_helpers() {
+        let cfg = Config::default();
+        assert_eq!(cfg.install_dir(), Path::new("/var/www/html"));
+        assert_eq!(cfg.web_user(), "www-data");
+    }
 }

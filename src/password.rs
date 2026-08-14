@@ -82,4 +82,41 @@ mod tests {
         if_empty_generate(&mut s);
         assert_eq!(s, "hunter2");
     }
+
+    #[test]
+    fn if_empty_generate_hex_keeps_existing() {
+        let mut s = String::from("custom-key");
+        if_empty_generate_hex(&mut s);
+        assert_eq!(s, "custom-key");
+    }
+
+    #[test]
+    fn if_empty_generate_hex_replaces_empty() {
+        let mut s = String::new();
+        if_empty_generate_hex(&mut s);
+        assert_eq!(s.len(), 32);
+        assert!(s.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn generated_passwords_differ() {
+        // Extremely unlikely to collide; guards against degenerate RNG.
+        let a = str_random(20);
+        let b = str_random(20);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn passwords_have_no_ambiguous_characters() {
+        // Shell/shell-embedded-safe: only alphanumerics, no quotes/spaces.
+        for c in str_random(100).chars() {
+            assert!(c.is_ascii_alphanumeric(), "unsafe char {c:?}");
+        }
+    }
+
+    #[test]
+    fn hex32_lowercase() {
+        let s = hex32();
+        assert_eq!(s, s.to_ascii_lowercase());
+    }
 }

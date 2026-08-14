@@ -58,3 +58,13 @@ pub fn test_context() -> (Context, MockExec) {
     };
     (ctx, exec)
 }
+
+/// Like [`test_context`] but with `dry_run = true`, so file-writes are
+/// printed instead of touching the filesystem. Steps that shell out can
+/// still be inspected via the recorded [`MockExec`].
+#[allow(dead_code)] // only used by some test binaries
+pub fn test_context_dry() -> (Context, MockExec) {
+    let (mut ctx, exec) = test_context();
+    ctx.dry_run = true;
+    (ctx, exec)
+}

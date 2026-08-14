@@ -88,3 +88,46 @@ fn start_bar() -> ProgressBar {
     bar.set_message("please wait...");
     bar
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn real_exec_runs_echo() {
+        let out = RealExec.run("echo hello").unwrap();
+        assert!(out.status.success());
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+    }
+
+    #[test]
+    fn real_exec_captures_stderr() {
+        let err = RealExec.run("echo boom >&2; exit 3").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("boom"), "stderr should surface: {msg}");
+        assert!(
+            msg.contains("command failed"),
+            "should mention failure: {msg}"
+        );
+    }
+
+    #[test]
+    fn real_exec_reports_failure() {
+        let err = RealExec.run("exit 42").unwrap_err();
+        assert!(err.to_string().contains("42"));
+    }
+
+    #[test]
+    fn dry_exec_succeeds_and_records_nothing() {
+        let out = DryExec.run("echo anything").unwrap();
+        assert!(out.status.success());
+        assert!(out.stdout.is_empty());
+        assert!(out.stderr.is_empty());
+    }
+
+    #[test]
+    fn success_status_helper() {
+        let s = success_status();
+        assert!(s.success());
+    }
+}

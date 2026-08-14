@@ -58,13 +58,47 @@ fn init_tracing(verbosity: u8) {
 
 #[cfg(test)]
 mod tests {
+    use crate::cli::Args;
+    use clap::Parser;
+
     #[test]
     fn cli_parses_minimal() {
-        use crate::cli::Args;
-        use clap::Parser;
         let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
         assert!(args.non_interactive);
         assert!(!args.dry_run);
         assert!(args.config.is_none());
+        assert_eq!(args.verbosity, 0);
+    }
+
+    #[test]
+    fn cli_parses_config_path() {
+        let args = Args::parse_from([
+            "unit3d-installer",
+            "--config",
+            "unit3d-installer.example.toml",
+            "--dry-run",
+            "-vvv",
+        ]);
+        assert!(args.dry_run);
+        assert_eq!(
+            args.config.unwrap().to_str(),
+            Some("unit3d-installer.example.toml")
+        );
+        assert_eq!(args.verbosity, 3);
+    }
+
+    #[test]
+    fn cli_accepts_alias_for_non_interactive() {
+        let args = Args::parse_from(["unit3d-installer", "--yes-to-all"]);
+        assert!(args.non_interactive);
+    }
+
+    #[test]
+    fn cli_defaults_are_safe() {
+        let args = Args::parse_from(["unit3d-installer"]);
+        assert!(!args.non_interactive);
+        assert!(!args.dry_run);
+        assert!(args.config.is_none());
+        assert_eq!(args.verbosity, 0);
     }
 }

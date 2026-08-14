@@ -208,4 +208,61 @@ mod tests {
     fn default_tuning_for_small() {
         assert!(DEFAULT_SMALL.contains("innodb_file_per_table"));
     }
+
+    #[test]
+    fn pick_mycnf_boundaries() {
+        // Below 1.2 GB → small.
+        assert_eq!(pick_mycnf(0), "my-small.cnf");
+        assert_eq!(pick_mycnf(1_199_999), "my-small.cnf");
+        // [1.2 GB, 3.9 GB) → medium.
+        assert_eq!(pick_mycnf(1_200_000), "my-medium.cnf");
+        assert_eq!(pick_mycnf(2_000_000), "my-medium.cnf");
+        assert_eq!(pick_mycnf(3_899_999), "my-medium.cnf");
+        // ≥ 3.9 GB → large.
+        assert_eq!(pick_mycnf(3_900_000), "my-large.cnf");
+        assert_eq!(pick_mycnf(u64::MAX), "my-large.cnf");
+    }
+
+    #[test]
+    fn flavor_attributes() {
+        let m = Flavor::Mysql;
+        assert_eq!(m.binary(), "mysql");
+        assert_eq!(m.server_pkg(), "mysql-server");
+        assert_eq!(m.init_bin(), "mysqld");
+        assert_eq!(m.admin_bin(), "mysqladmin");
+        assert_eq!(m.service_name(), "mysql");
+
+        let md = Flavor::MariaDb;
+        assert_eq!(md.binary(), "mariadb");
+        assert_eq!(md.server_pkg(), "mariadb-server");
+        assert_eq!(md.init_bin(), "mariadbd");
+        assert_eq!(md.admin_bin(), "mariadb-admin");
+        assert_eq!(md.service_name(), "mariadb");
+    }
+
+    #[test]
+    fn shell_quote_strips_all_quotes() {
+        assert_eq!(shell_quote(""), "");
+        assert_eq!(shell_quote("plain"), "plain");
+        assert_eq!(shell_quote("a'b'c"), "abc");
+        assert_eq!(shell_quote("'"), "");
+        assert_eq!(shell_quote("O'Reilly"), "OReilly");
+    }
+
+    #[test]
+    fn default_tuning_large_is_bigger() {
+        assert!(DEFAULT_LARGE.contains("max_connections = 200"));
+        assert!(DEFAULT_MEDIUM.contains("max_connections = 70"));
+        assert!(DEFAULT_SMALL.contains("max_connections = 30"));
+    }
+
+    #[test]
+    fn is_dir_empty_helper() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(is_dir_empty(tmp.path().to_str().unwrap()).unwrap());
+        std::fs::write(tmp.path().join("f"), "x").unwrap();
+        assert!(!is_dir_empty(tmp.path().to_str().unwrap()).unwrap());
+        // Nonexistent path is "not empty" from the helper's perspective.
+        assert!(!is_dir_empty("/nonexistent-dir-xyz").unwrap());
+    }
 }
