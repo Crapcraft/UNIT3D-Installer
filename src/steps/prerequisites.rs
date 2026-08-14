@@ -1,4 +1,4 @@
-//! Prerequisite apt packages + Node.js 20 + Bun + laravel-echo-server +
+//! Prerequisite apt packages + Node.js 24 LTS + Bun + laravel-echo-server +
 //! UFW rules. Replaces `src/Installer/Prerequisites/Prerequisites.php` and
 //! the inline apt calls from `ubuntu.sh`.
 
@@ -31,7 +31,7 @@ impl Step for PrerequisitesStep {
         ctx.run_all([
             "add-apt-repository -y ppa:ondrej/php".to_string(),
             "apt-get -qq update".to_string(),
-            "curl -sL https://deb.nodesource.com/setup_20.x | sudo -E bash -".to_string(),
+            "curl -sL https://deb.nodesource.com/setup_24.x | sudo -E bash -".to_string(),
             "curl -fsSL https://bun.sh/install | bash".to_string(),
             "mv /root/.bun/bin/bun /usr/local/bin/ 2>/dev/null || true".to_string(),
             "chmod a+x /usr/local/bin/bun 2>/dev/null || true".to_string(),

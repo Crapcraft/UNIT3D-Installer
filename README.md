@@ -50,9 +50,9 @@ The Rust rewrite compiles to a **single static binary** with zero runtime depend
 
 ## Features
 
-- **Ubuntu LTS only** (20.04, 22.04, 24.04; 26.04 in progress) with root privilege checks.
+- **Ubuntu LTS only** (20.04, 22.04, 24.04, 26.04) with root privilege checks.
 - **Database choice**: MySQL, MariaDB, or PostgreSQL — auto-provisioned and secured with randomized credentials.
-- **PHP 8.5** via the Ondrej PPA with opcache/JIT tuning, plus Node.js 20, Bun, and `laravel-echo-server`.
+- **PHP 8.5** via the Ondrej PPA with opcache/JIT tuning, plus Node.js 24 LTS, Bun, and `laravel-echo-server`.
 - **Redis over unix sockets** for sub-millisecond IPC, with RAM-bounded LRU eviction (`maxmemory`).
 - **Nginx** site configuration with security headers, gzip, static-asset caching, `.env`/`.git` protection, and a `/socket.io` proxy for the chat server on the configured echo port.
 - **Let's Encrypt SSL** via `certbot` (automatic when `ssl = true`).
@@ -66,7 +66,7 @@ The Rust rewrite compiles to a **single static binary** with zero runtime depend
 
 | Requirement | Value |
 | --- | --- |
-| OS | Ubuntu 20.04 / 22.04 / 24.04 LTS |
+| OS | Ubuntu 20.04 / 22.04 / 24.04 / 26.04 LTS |
 | Privileges | `root` (or `sudo`) |
 | Network | A valid domain with an `A` record (and `CNAME` for `www`) pointing at the server |
 | Memory | 4 GB+ recommended (Redis, PHP-FPM, and Meilisearch all run concurrently) |
@@ -189,7 +189,7 @@ The pipeline mirrors the classic installer flow, in this order:
 | 1 | **Policies** | Verifies root, supported Ubuntu release, no existing install, PHP version |
 | 2 | **Server** | Hostname, locale, timezone, swap, security hardening, SSH |
 | 3 | **Redis** | Unix socket + group permissions, `maxmemory` cap, LRU policy, restart |
-| 4 | **Prerequisites** | PPA, apt packages, Node 20, Bun, `laravel-echo-server`, UFW rules |
+| 4 | **Prerequisites** | PPA, apt packages, Node 24 LTS, Bun, `laravel-echo-server`, UFW rules |
 | 5 | **Database** | Installs & secures MySQL/MariaDB/PostgreSQL, creates DB + user |
 | 6 | **PHP** | PHP-FPM, opcache/JIT tuning, `php.ini` hardening |
 | 7 | **Nginx** | Site config, security headers, `/socket.io` proxy, certbot SSL |

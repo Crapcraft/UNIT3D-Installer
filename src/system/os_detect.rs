@@ -119,6 +119,27 @@ mod tests {
         assert_eq!(info.version_id, "24.04");
     }
 
+    #[test]
+    fn parses_ubuntu_2604_os_release() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "NAME=\"Ubuntu\"\nVERSION=\"26.04 LTS\"\nID=ubuntu\nID_LIKE=debian\nPRETTY_NAME=\"Ubuntu 26.04 LTS\"\nVERSION_ID=\"26.04\"\n").unwrap();
+        let info = parse_for_test(std::fs::read_to_string(tmp.path()).unwrap());
+        assert_eq!(info.distro, Distro::Ubuntu);
+        assert_eq!(info.version_id, "26.04");
+    }
+
+    #[test]
+    fn rejects_non_ubuntu() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "NAME=\"Debian\"\nVERSION=\"12\"\nID=debian\nVERSION_ID=\"12\"\n",
+        )
+        .unwrap();
+        let info = parse_for_test(std::fs::read_to_string(tmp.path()).unwrap());
+        assert_eq!(info.distro, Distro::Unsupported);
+    }
+
     fn parse_for_test(text: String) -> DistInfo {
         let mut id = String::new();
         let mut version_id = String::new();

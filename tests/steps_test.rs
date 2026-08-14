@@ -74,7 +74,7 @@ fn prerequisites_installs_packages_and_extensions() {
     // PHP extensions (php8.5-*).
     assert!(exec.any("php8.5-fpm"));
     // Node + Bun + echo server.
-    assert!(exec.any("deb.nodesource.com/setup_20.x"));
+    assert!(exec.any("deb.nodesource.com/setup_24.x"));
     assert!(exec.any("bun.sh/install"));
     assert!(exec.any("npm install -g laravel-echo-server"));
     // UFW
