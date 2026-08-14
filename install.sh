@@ -1,51 +1,40 @@
 #!/usr/bin/env bash
+# UNIT3D-Installer bootstrap (Rust edition).
+#
+# Downloads a single static `unit3d-installer` binary from the latest
+# GitHub Release and runs it. Replaces the legacy `install.sh` +
+# `ubuntu.sh` + `box.json`/PHAR chain.
 
-source tools/colors.sh
+set -euo pipefail
 
-# Detect OS
-case $(head -n1 /etc/issue | cut -f 1 -d ' ') in
-    Ubuntu)     type="ubuntu" ;;
-    *)          type='' ;;
+REPO="InfinityHD-Net/UNIT3D-Installer"
+
+if [[ $EUID -ne 0 ]]; then
+    echo "ERROR: Please run as root (sudo ./install.sh)" >&2
+    exit 1
+fi
+
+# Ensure we have curl + tar.
+if ! command -v curl >/dev/null 2>&1; then
+    apt-get -y update
+    apt-get -y install -y ca-certificates curl tar
+fi
+
+ARCH="$(uname -m)"
+case "$ARCH" in
+    x86_64)  ARCH="x86_64" ;;
+    aarch64|arm64) ARCH="aarch64" ;;
+    *) echo "ERROR: Unsupported architecture: $ARCH" >&2; exit 1 ;;
 esac
 
-# Unable to detect OS Properly
-# Note: OVH and other providers remove the contents of /etc/issue in their OS templates
-#   so we need to ask the user manually to tell us what the OS is as a Fallback
-# Ref: https://github.com/ServNX/UNIT3D-INSTALLER/issues/8
-if [ "$type" = '' ]; then
-    echo -e "\n$Red We was unable to automatically determine your OS! $Color_Off"
-    echo -e "\n$Purple This can happen if you are using an OS template from a provider like OVH amongst others. $Color_Off\n"
+URL="https://github.com/${REPO}/releases/latest/download/unit3d-installer-${ARCH}.tar.gz"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
-    PS3='Please select the # for your OS: '
-    options=("Ubuntu 24.04" "Ubuntu 22.04" "Ubuntu 20.04" "Quit")
-    select opt in "${options[@]}"
-    do
-        case $opt in
-            "Ubuntu 24.04")
-                echo 'Ubuntu 24.04 LTS \n \l' > /etc/issue
-                type='ubuntu'
-                break
-                ;;
-            "Ubuntu 22.04")
-                echo 'Ubuntu 22.04 LTS \n \l' > /etc/issue
-                type='ubuntu'
-                break
-                ;;
-            "Ubuntu 20.04")
-                echo 'Ubuntu 20.04 LTS \n \l' > /etc/issue
-                type='ubuntu'
-                break
-                ;;
-            "Quit")
-                exit 0
-                ;;
-            *)
-                echo -e "$Red Invalid Option $REPLY $Color_Off"
-                ;;
-        esac
-    done
-fi
+echo "Downloading $URL..."
+curl -fsSL "$URL" -o "$TMP/unit3d-installer.tar.gz"
+tar -xzf "$TMP/unit3d-installer.tar.gz" -C "$TMP"
+install -m 0755 "$TMP/unit3d-installer" /usr/local/bin/unit3d-installer
 
-if [ -e $type.sh ]; then
-    bash ./$type.sh
-fi
+echo "Starting UNIT3D installer..."
+exec /usr/local/bin/unit3d-installer install "$@"

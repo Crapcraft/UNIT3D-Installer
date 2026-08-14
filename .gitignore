@@ -1,4 +1,5 @@
-/vendor
+/target
 /.idea
-/src/logs
-/src/cache
+/.vscode
+*.swp
+.DS_Store

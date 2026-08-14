@@ -1,0 +1,29 @@
+---
+source: tests/templates_test.rs
+assertion_line: 68
+expression: "render(&SupervisorTemplate\n{ install_dir: \"/var/www/unit3d\", web_user: \"www-data\", })"
+---
+[program:unit3d-queue]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/unit3d/artisan queue:work redis --sleep=3 --tries=3 --max-time=3600
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=4
+redirect_stderr=true
+stdout_logfile=/var/www/unit3d/storage/logs/queue.log
+stopwaitsecs=3600
+
+[program:unit3d-echo]
+process_name=%(program_name)s_%(process_num)02d
+command=/usr/bin/node /usr/bin/laravel-echo-server start --dir=/var/www/unit3d
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/www/unit3d/storage/logs/echo.log

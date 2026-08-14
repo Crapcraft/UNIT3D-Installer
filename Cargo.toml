@@ -1,0 +1,42 @@
+[package]
+name = "unit3d-installer"
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Installer for UNIT3D-Community-Edition"
+license = "MIT"
+authors = ["HDVinnie and contributors"]
+
+[[bin]]
+name = "unit3d-installer"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "cargo"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dialoguer = { version = "0.11", features = ["fuzzy-select"] }
+indicatif = "0.17"
+owo-colors = "4"
+askama = "0.12"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+nix = { version = "0.29", features = ["user"] }
+rand = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+glob = "0.3"
+
+[dev-dependencies]
+insta = { version = "1", features = ["filters"] }
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
+mockall = "0.12"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+codegen-units = 1

@@ -1,0 +1,5 @@
+[target.x86_64-unknown-linux-gnu]
+# Pin the linker explicitly. Some toolchains (e.g. Arch rustc) derive the
+# default linker name from the target triple as `x86_64-linux-gnu-gcc`,
+# which is not installed everywhere; `cc` is the portable alias.
+linker = "cc"

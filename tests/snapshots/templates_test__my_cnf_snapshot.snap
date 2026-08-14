@@ -1,0 +1,7 @@
+---
+source: tests/templates_test.rs
+assertion_line: 83
+expression: "render(&MyCnfTemplate { password: \"rootsecret\", })"
+---
+[client]
+password=rootsecret

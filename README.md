@@ -7,32 +7,76 @@
 <p align="center"><b>NOTE: This only works for a fresh server with nothing on it but a new OS install!</b></p>
 
 ## This Repository
-Installer for the [UNIT3D-Community-Edition](https://github.com/HDInnovations/UNIT3D-Community-Edition).
+
+Installer for the [UNIT3D-Community-Edition](https://github.com/HDInnovations/UNIT3D-Community-Edition), rewritten in Rust as a single static binary. It replaces the legacy PHP/PHAR installer with a self-contained `curl | sh` bootstrap.
 
 **Officially Supported OS's**
+- Ubuntu 24.04 LTS (Noble Numbat)
 - Ubuntu 22.04 LTS (Jammy Jellyfish)
 - Ubuntu 20.04 LTS (Focal Fossa)
 
 **Unstable WIP**
-- Ubuntu 24.04 LTS (Noble Numbat)
+- Ubuntu 26.04 LTS
 
+## Quick Install
 
-**We offer install and tuning services for a small price if not comfortable installing and tuninng server yourself. Otherwise if want to install yurself run commannd below.**
+Run on a fresh server with a valid A record (and CNAME for `www`) pointing at its IP:
 
-**To install run the following:** (and follow the instructions. must be a fresh deicated server with nothing on it besides supported OS. Also must have a proper valid domain pointing to your server IP via A RECORD and CNAME for www)
+```
+curl -sSL https://raw.githubusercontent.com/InfinityHD-Net/UNIT3D-Installer/master/install.sh | sudo bash
+```
+
+Or clone and run the bootstrap manually:
+
 ```
 sudo apt -y install git
-git clone https://github.com/HDInnovations/UNIT3D-Installer.git installer
+git clone https://github.com/InfinityHD-Net/UNIT3D-Installer.git installer
 cd installer
 sudo ./install.sh
 ```
 
-**NOTE: If you are running UNIT3D-Community-Edition on a non HTTPS instance you MUST change the following configs.**
+## Configuration
+
+All options are declared in [`unit3d-installer.example.toml`](unit3d-installer.example.toml). Provide a config file with `--config`; any omitted field falls back to the baked-in defaults.
+
 ```
-.env  <-- SESSION_SECURE_COOKIE must be set to false
-config/secure-headers.php   <-- HTTP Strict Transport Security must be set to false
-config/secure-headers.php   <-- Content Security Policy must be disabled
+sudo ./install.sh --config /path/to/unit3d-installer.toml
 ```
 
-### Suggestions and/or Bug Reporting
-We encourage the use of [GitHub Issues](https://github.com/HDInnovations/UNIT3D-INSTALLER/issues/new)!
+Preview the full plan without touching the system:
+
+```
+sudo ./install.sh --dry-run --non-interactive --config unit3d-installer.example.toml
+```
+
+### Highlights
+
+- Ubuntu LTS only; requires root (`sudo`).
+- Database: MySQL, MariaDB, or PostgreSQL (pinned to the UNIT3D tag).
+- PHP 8.5 (Ondrej PPA), Node 20, Bun, `laravel-echo-server`.
+- Redis over unix sockets with RAM-bounded LRU eviction.
+- Nginx with security headers, gzip, static-asset caching, and the `/socket.io` chat proxy on the configured echo port.
+- Meilisearch (systemd service) with `scout` indexing.
+- Let's Encrypt SSL via certbot.
+- Queue worker under supervisor with `queue:work redis --sleep=3 --tries=3 --max-time=3600`.
+- Idempotent `crontab` merge for `artisan schedule:run`.
+- Credentials written to `/root/unit3d-credentials.txt` at the end.
+
+## Building From Source
+
+```
+cargo build --release
+```
+
+The release profile uses thin LTO and symbol stripping; see `Cargo.toml`.
+
+## Testing
+
+```
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
+
+## Suggestions and/or Bug Reporting
+
+We encourage the use of [GitHub Issues](https://github.com/InfinityHD-Net/UNIT3D-Installer/issues/new)!

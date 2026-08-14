@@ -1,0 +1,5 @@
+env = "production"
+master_key = "{{master_key}}"
+db_path = "{{db_path}}"
+dump_dir = "{{dump_dir}}"
+snapshot_dir = "{{snapshot_dir}}"

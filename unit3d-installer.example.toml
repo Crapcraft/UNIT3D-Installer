@@ -1,0 +1,47 @@
+# UNIT3D-Installer example configuration.
+#
+# Pass to the installer via `--config path/to/unit3d-installer.toml`.
+# Any field omitted here falls back to the baked-in defaults.
+
+[unit3d]
+min_php_version = "8.5"
+repository      = "https://github.com/HDInnovations/UNIT3D-Community-Edition.git"
+tag             = "v9.2.0"
+
+[app]
+server_name    = "tracker"
+hostname       = "tracker.example.com"
+ip             = ""
+ssl            = true
+branch         = "master"
+
+owner          = "UNIT3D"
+owner_email     = "admin@tracker.example.com"
+# password       = ""            # auto-generated when blank
+
+db_driver      = "MariaDb"     # "MariaDb" | "MySql" | "Postgres"
+db             = "unit3d"
+dbuser         = "unit3d"
+# dbpass         = ""            # auto-generated when blank
+# dbrootpass     = ""            # required for MySQL/MariaDB (set non-interactively)
+
+echo_port      = 8443
+
+mail_driver    = "smtp"
+mail_host      = ""
+mail_port      = "587"
+mail_username  = ""
+mail_password  = ""
+mail_from_name = "UNIT3D"
+
+tmdb_key       = ""
+# meilisearch_key = ""            # auto-generated when blank
+
+[os.ubuntu]
+pkg_manager                = "apt-get"
+web_user                   = "www-data"
+install_dir                = "/var/www/html"
+nginx_sites_available_path = "/etc/nginx/sites-available"
+
+# Omit `[os.ubuntu.software]` to use the built-in package list and PHP
+# extension set. Override by providing the full list here.

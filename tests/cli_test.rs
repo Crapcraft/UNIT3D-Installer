@@ -1,0 +1,103 @@
+//! End-to-end CLI smoke tests. These run the compiled binary in `--dry-run
+//! --non-interactive` mode against the shipped example config, asserting the
+//! full pipeline executes without touching the system.
+
+use assert_cmd::Command;
+use predicates::prelude::*;
+
+const EXAMPLE_CONFIG: &str = "unit3d-installer.example.toml";
+
+/// Strip ANSI SGR escape sequences so assertions work regardless of the
+/// owo-colors TTY detection behavior.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next == 'm' {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn dry_run_stdout() -> String {
+    let mut cmd = Command::cargo_bin("unit3d-installer").unwrap();
+    let out = cmd
+        .args(["--non-interactive", "--dry-run", "--config", EXAMPLE_CONFIG])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "dry-run must succeed");
+    strip_ansi(&String::from_utf8_lossy(&out.stdout))
+}
+
+#[test]
+fn dry_run_completes_all_steps() {
+    let stdout = dry_run_stdout();
+    assert!(stdout.contains("UNIT3D Installation Complete!"));
+}
+
+#[test]
+fn dry_run_emits_step_headers_and_commands() {
+    let stdout = dry_run_stdout();
+
+    // Every step header appears.
+    for header in [
+        "Validating Installer Policies",
+        "Redis Setup & Configurations",
+        "Prerequisites",
+        "Database",
+        "PHP",
+        "Nginx Setup & Configurations",
+        "UNIT3D",
+        "Meilisearch",
+        "Credentials",
+    ] {
+        assert!(stdout.contains(header), "missing step header: {header}");
+    }
+
+    // Dry-run prints each command prefixed with `$ `.
+    assert!(stdout.contains("$ apt-get install -y"));
+    assert!(stdout.contains("$ systemctl restart redis-server"));
+    assert!(stdout.contains("$ certbot"));
+    assert!(stdout.contains("php artisan key:generate"));
+}
+
+#[test]
+fn missing_config_is_an_error() {
+    let mut cmd = Command::cargo_bin("unit3d-installer").unwrap();
+    cmd.args([
+        "--non-interactive",
+        "--dry-run",
+        "--config",
+        "/nonexistent/config.toml",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("failed to load configuration"));
+}
+
+#[test]
+fn help_flag_prints_usage() {
+    let mut cmd = Command::cargo_bin("unit3d-installer").unwrap();
+    cmd.arg("--help").assert().success().stdout(
+        predicate::str::contains("--config")
+            .and(predicate::str::contains("--dry-run"))
+            .and(predicate::str::contains("--non-interactive")),
+    );
+}
+
+#[test]
+fn version_flag_prints_version() {
+    let mut cmd = Command::cargo_bin("unit3d-installer").unwrap();
+    cmd.arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
+}

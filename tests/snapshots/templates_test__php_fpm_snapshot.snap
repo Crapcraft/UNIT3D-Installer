@@ -1,0 +1,23 @@
+---
+source: tests/templates_test.rs
+assertion_line: 60
+expression: "render(&PhpFpmTemplate { fqdn: \"tracker.example.com\", web_user: \"www-data\", })"
+---
+[tracker.example.com]
+
+ listen = /var/run/php/tracker.example.com.sock
+ listen.backlog = 511
+ listen.owner = www-data
+ listen.group = www-data
+ listen.mode = 0660
+
+ user = www-data
+ group = www-data
+
+ pm = ondemand
+ pm.max_children = 10
+ pm.process_idle_timeout = 10
+ pm.max_requests = 0
+ chdir = /
+
+ request_terminate_timeout = 600

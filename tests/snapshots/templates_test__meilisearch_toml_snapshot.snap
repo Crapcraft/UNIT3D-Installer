@@ -1,0 +1,10 @@
+---
+source: tests/templates_test.rs
+assertion_line: 102
+expression: "render(&MeilisearchTomlTemplate\n{\n    master_key: \"masterkey\", db_path: \"/var/lib/meilisearch/data.ms\",\n    dump_dir: \"/var/lib/meilisearch/dumps\", snapshot_dir:\n    \"/var/lib/meilisearch/snapshots\",\n})"
+---
+env = "production"
+master_key = "masterkey"
+db_path = "/var/lib/meilisearch/data.ms"
+dump_dir = "/var/lib/meilisearch/dumps"
+snapshot_dir = "/var/lib/meilisearch/snapshots"
