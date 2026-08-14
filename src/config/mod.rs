@@ -336,6 +336,8 @@ pub enum ConfigError {
          `--config` entirely to answer the questions interactively."
     )]
     Empty(PathBuf),
+    #[error("invalid configuration: {0}")]
+    Invalid(String),
 }
 
 impl Config {
@@ -350,9 +352,32 @@ impl Config {
                 return Err(ConfigError::Empty(path.to_path_buf()));
             }
             let cfg: Config = toml::from_str(&text)?;
+            cfg.validate()?;
             return Ok(cfg);
         }
         Ok(Config::default())
+    }
+
+    /// Structural validation that catches obviously-broken configuration
+    /// before any destructive step runs. FQDN and port checks apply to both
+    /// config-file and interactive paths.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        // hostname must look like a FQDN unless explicitly "localhost".
+        if !self.app.hostname.is_empty()
+            && self.app.hostname != "localhost"
+            && !is_valid_fqdn(&self.app.hostname)
+        {
+            return Err(ConfigError::Invalid(format!(
+                "app.hostname '{}' is not a valid fully-qualified domain name",
+                self.app.hostname
+            )));
+        }
+        if self.app.echo_port == 0 {
+            return Err(ConfigError::Invalid(
+                "app.echo_port must be a non-zero TCP port (1-65535)".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Resolve the install dir, falling back to the OS section default.
@@ -363,6 +388,16 @@ impl Config {
     pub fn web_user(&self) -> &str {
         &self.os.ubuntu.web_user
     }
+}
+
+/// Conservative FQDN check: at least two dot-separated labels, no
+/// spaces/slashes/control chars, all lowercase-safe. Allows a trailing dot.
+fn is_valid_fqdn(s: &str) -> bool {
+    let s = s.trim_end_matches('.');
+    if s.is_empty() || s.len() > 253 || s.contains(' ') || s.contains('/') {
+        return false;
+    }
+    s.split('.').count() >= 2 && s.split('.').all(|label| !label.is_empty())
 }
 
 /// True when a config file contains only comments and whitespace — i.e. no
@@ -628,5 +663,56 @@ web_user = "ubuntu"
         for (pkg, desc) in &SoftwareSection::default().packages {
             assert!(!desc.contains('{') && !desc.contains('}'), "{pkg}");
         }
+    }
+
+    #[test]
+    fn validate_accepts_valid_fqdn() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_bare_hostname() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "myserver".to_string();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("not a valid fully-qualified"));
+    }
+
+    #[test]
+    fn validate_accepts_localhost() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "localhost".to_string();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_zero_echo_port() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        cfg.app.echo_port = 0;
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("echo_port"));
+    }
+
+    #[test]
+    fn fqdn_checks() {
+        assert!(is_valid_fqdn("tracker.example.com"));
+        assert!(is_valid_fqdn("a.b"));
+        assert!(is_valid_fqdn("sub.domain.co.uk"));
+        assert!(!is_valid_fqdn("no-dot"));
+        assert!(!is_valid_fqdn("has space.com"));
+        assert!(!is_valid_fqdn("has/slash.com"));
+        assert!(!is_valid_fqdn(".leading-dot"));
+        assert!(!is_valid_fqdn(""));
+    }
+
+    #[test]
+    fn load_rejects_invalid_hostname_config() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "[app]\nhostname = \"badhostname\"\n").unwrap();
+        let err = Config::load(Some(tmp.path())).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid(_)));
     }
 }

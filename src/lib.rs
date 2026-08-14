@@ -11,6 +11,7 @@ pub mod io;
 pub mod password;
 pub mod process;
 pub mod resources;
+pub mod secrets;
 pub mod steps;
 pub mod system;
 

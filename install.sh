@@ -2,8 +2,8 @@
 # UNIT3D-Installer bootstrap (Rust edition).
 #
 # Downloads a single static `unit3d-installer` binary from the latest
-# GitHub Release and runs it. Replaces the legacy `install.sh` +
-# `ubuntu.sh` + `box.json`/PHAR chain.
+# GitHub Release, verifies its SHA-256 checksum, and runs it.
+# Replaces the legacy `install.sh` + `ubuntu.sh` + `box.json`/PHAR chain.
 
 set -euo pipefail
 
@@ -22,19 +22,49 @@ fi
 
 ARCH="$(uname -m)"
 case "$ARCH" in
-    x86_64)  ARCH="x86_64" ;;
+    x86_64)   ARCH="x86_64" ;;
     aarch64|arm64) ARCH="aarch64" ;;
     *) echo "ERROR: Unsupported architecture: $ARCH" >&2; exit 1 ;;
 esac
 
-URL="https://github.com/${REPO}/releases/latest/download/unit3d-installer-${ARCH}.tar.gz"
+# Prefer a specific version if the caller set UNIT3D_INSTALLER_VERSION,
+# otherwise pull the latest release.
+VERSION="${UNIT3D_INSTALLER_VERSION:-latest}"
+URL="https://github.com/${REPO}/releases/download/${VERSION}/unit3d-installer-${ARCH}.tar.gz"
+SUM_URL="${URL}.sha256"
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "Downloading $URL..."
-curl -fsSL "$URL" -o "$TMP/unit3d-installer.tar.gz"
+curl -fsSL --retry 3 --connect-timeout 15 "$URL" -o "$TMP/unit3d-installer.tar.gz"
+curl -fsSL --retry 3 --connect-timeout 15 "$SUM_URL" -o "$TMP/unit3d-installer.tar.gz.sha256" 2>/dev/null || true
+
+# Integrity check: verify the tarball against the published checksum. If the
+# checksum file is unavailable the install refuses to continue rather than
+# running an unverified binary.
+EXPECTED_SUM="$(awk '{print $1}' "$TMP/unit3d-installer.tar.gz.sha256" 2>/dev/null || true)"
+if [[ -z "${EXPECTED_SUM}" ]]; then
+    echo "ERROR: checksum for the release binary is unavailable; refusing to install unverified binary." >&2
+    exit 1
+fi
+ACTUAL_SUM="$(sha256sum "$TMP/unit3d-installer.tar.gz" | awk '{print $1}')"
+if [[ "${EXPECTED_SUM}" != "${ACTUAL_SUM}" ]]; then
+    echo "ERROR: checksum mismatch for $URL" >&2
+    echo "  expected: ${EXPECTED_SUM}" >&2
+    echo "  actual:   ${ACTUAL_SUM}" >&2
+    exit 1
+fi
+echo "Checksum verified (${ACTUAL_SUM})"
+
 tar -xzf "$TMP/unit3d-installer.tar.gz" -C "$TMP"
 install -m 0755 "$TMP/unit3d-installer" /usr/local/bin/unit3d-installer
 
+# Smoke-check the freshly installed binary before handing off.
+if ! /usr/local/bin/unit3d-installer --version >/dev/null 2>&1; then
+    echo "ERROR: installed binary failed a self-check" >&2
+    exit 1
+fi
+
 echo "Starting UNIT3D installer..."
-exec /usr/local/bin/unit3d-installer install "$@"
+exec /usr/local/bin/unit3d-installer "$@"

@@ -38,7 +38,10 @@ impl Step for CredentialsStep {
             println!("{rendered}");
             return Ok(());
         }
-        std::fs::write("/root/unit3d-credentials.txt", rendered)?;
+        ctx.write_secret_file(
+            std::path::Path::new("/root/unit3d-credentials.txt"),
+            &rendered,
+        )?;
         ctx.run("chmod 600 /root/unit3d-credentials.txt")?;
         ctx.style
             .info("Credentials saved to /root/unit3d-credentials.txt");

@@ -41,6 +41,13 @@ fn clone(ctx: &mut Context) -> Result<()> {
     let tag = ctx.config.unit3d.tag.clone();
 
     if install_dir.exists() {
+        if let Some(reason) = unsafe_to_delete(&install_dir) {
+            anyhow::bail!(
+                "refusing to `rm -rf` {reason} — install_dir {} points outside the web root. \
+                 Set a safe install_dir in your config.",
+                install_dir.display()
+            );
+        }
         ctx.run(&format!("rm -rf {}", install_dir.display()))?;
     }
 
@@ -56,6 +63,51 @@ fn clone(ctx: &mut Context) -> Result<()> {
         anyhow::bail!("git clone failed for {url} @ {tag}");
     }
     Ok(())
+}
+
+/// Refuse to `rm -rf` anything at or above the filesystem root, home dirs,
+/// or other clearly-dangerous locations. Returns `Some(reason)` when the
+/// path must not be deleted.
+///
+/// `/var/www/...` (the default web root) is deliberately allowed — deleting
+/// it is the whole point of a reinstall — but `/var` itself and sensitive
+/// subdirs like `/var/lib`, `/var/run`, `/var/log` are rejected.
+fn unsafe_to_delete(path: &Path) -> Option<&'static str> {
+    let text = path.to_string_lossy().to_string();
+    for (prefix, reason) in [
+        ("/", "the filesystem root"),
+        ("/root", "the root home directory"),
+        ("/home", "the home directory tree"),
+        ("/etc", "/etc"),
+        ("/usr", "/usr"),
+        ("/bin", "/bin"),
+        ("/sbin", "/sbin"),
+        ("/lib", "/lib"),
+        ("/opt", "/opt"),
+        ("/boot", "/boot"),
+        ("/dev", "/dev"),
+        ("/proc", "/proc"),
+        ("/sys", "/sys"),
+        ("/tmp", "/tmp"),
+        ("/run", "/run"),
+    ] {
+        if text == prefix || text.starts_with(&format!("{prefix}/")) {
+            return Some(reason);
+        }
+    }
+    // Reject `/var` and `/srv` and their system subdirs, but allow the
+    // conventional web roots `/var/www/...` and `/srv/www/...`.
+    if (text == "/var" || text.starts_with("/var/") && !text.starts_with("/var/www"))
+        || (text == "/srv" || text.starts_with("/srv/") && !text.starts_with("/srv/www"))
+    {
+        return Some("outside the web root");
+    }
+    // A single-component path with no slash is a relative or root-adjacent
+    // path; never rm -rf that.
+    if !text.contains('/') {
+        return Some("a relative path");
+    }
+    None
 }
 
 fn env(ctx: &mut Context) -> Result<()> {
@@ -97,7 +149,7 @@ fn env(ctx: &mut Context) -> Result<()> {
         redis_port: "-1",
     };
     let rendered = tpl.render()?;
-    ctx.write_file(&env_path, &rendered)?;
+    ctx.write_secret_file(&env_path, &rendered)?;
     ctx.style.info(&format!("wrote {}", env_path.display()));
     Ok(())
 }
@@ -214,4 +266,49 @@ fn setup(ctx: &mut Context) -> Result<()> {
 
     ctx.style.info("UNIT3D installed successfully");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsafe_paths_are_rejected() {
+        for p in [
+            "/",
+            "/etc",
+            "/etc/nginx",
+            "/root",
+            "/home",
+            "/home/user",
+            "/var",
+            "/var/lib",
+            "/var/lib/mysql",
+            "/var/run",
+            "/usr/local",
+            "/tmp",
+            "/bin",
+            "/srv",
+            "relative-path",
+        ] {
+            assert!(
+                unsafe_to_delete(Path::new(p)).is_some(),
+                "{p} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn web_root_is_allowed() {
+        assert!(unsafe_to_delete(Path::new("/var/www/html")).is_none());
+        assert!(unsafe_to_delete(Path::new("/var/www/html/unit3d")).is_none());
+        assert!(unsafe_to_delete(Path::new("/srv/www/unit3d")).is_none());
+    }
+
+    #[test]
+    fn empty_and_dot_handled() {
+        // An empty install_dir resolves to "." relative — rejected.
+        assert!(unsafe_to_delete(Path::new("")).is_some());
+        assert!(unsafe_to_delete(Path::new(".")).is_some());
+    }
 }

@@ -74,6 +74,41 @@ impl Context {
         std::fs::write(path, contents)?;
         Ok(())
     }
+
+    /// Write a file containing secrets (`.env`, `/root/.my.cnf`,
+    /// credentials ledger) with mode 0600, atomically (temp file + rename)
+    /// so no world-readable intermediate state ever exists on disk.
+    pub fn write_secret_file(&self, path: &std::path::Path, contents: &str) -> Result<()> {
+        if self.dry_run {
+            println!("# >>> write (0600) {}", path.display());
+            println!("{contents}");
+            println!("# <<< end {}", path.display());
+            return Ok(());
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tmp = temp_file_for(path);
+        std::fs::write(&tmp, contents)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        }
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    }
+}
+
+/// Derive a unique sibling temp path for atomic writes.
+fn temp_file_for(path: &std::path::Path) -> std::path::PathBuf {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unit3d-tmp".to_string());
+    let dir = path.parent().unwrap_or(std::path::Path::new("/tmp"));
+    let pid = std::process::id();
+    dir.join(format!(".{name}.{pid}.tmp"))
 }
 
 /// Catalog of every install step, in execution order. This is the Rust
@@ -199,5 +234,55 @@ mod tests {
         let ctx = Context::build(&args).unwrap();
         assert_eq!(ctx.config_path.as_deref(), Some(cfg_path.as_path()));
         assert_eq!(ctx.config.app.hostname, "x.com");
+    }
+
+    #[test]
+    fn write_secret_file_sets_0600_and_is_atomic() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let ctx = Context::build(&args).unwrap();
+        let tmp = tempdir().unwrap();
+        let target = tmp.path().join("secret.txt");
+        ctx.write_secret_file(&target, "s3cret").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "s3cret");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "secret file must be 0600");
+        }
+        // No leftover temp files next to the target.
+        let leftovers: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(leftovers, vec!["secret.txt"]);
+    }
+
+    #[test]
+    fn write_secret_file_overwrites_with_new_perms() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let ctx = Context::build(&args).unwrap();
+        let tmp = tempdir().unwrap();
+        let target = tmp.path().join("s.txt");
+        std::fs::write(&target, "old").unwrap();
+        ctx.write_secret_file(&target, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[test]
+    fn write_secret_file_dry_run_touches_nothing() {
+        let args = Args::parse_from(["unit3d-installer", "--dry-run"]);
+        let ctx = Context::build(&args).unwrap();
+        let tmp = tempdir().unwrap();
+        let target = tmp.path().join("nested/secret.txt");
+        ctx.write_secret_file(&target, "x").unwrap();
+        assert!(!target.exists());
+        assert!(!tmp.path().join("nested").exists());
     }
 }

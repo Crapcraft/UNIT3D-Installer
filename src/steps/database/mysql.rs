@@ -96,7 +96,7 @@ pub fn configure(ctx: &mut Context) -> Result<()> {
         password: &ctx.config.app.dbrootpass,
     };
     let rendered = tpl.render()?;
-    ctx.write_file(std::path::Path::new("/root/.my.cnf"), &rendered)?;
+    ctx.write_secret_file(std::path::Path::new("/root/.my.cnf"), &rendered)?;
     ctx.run("chmod 600 /root/.my.cnf")?;
 
     // Start the service and set the root password.
@@ -178,8 +178,16 @@ fn is_dir_empty(p: &str) -> Result<bool> {
 /// blunt protector against characters the shell would otherwise interpret;
 /// the installer warns explicitly in interactive prompts that special
 /// characters aren't supported yet.
+///
+/// Hardened for the Rust port: beyond stripping `'`, we also strip every
+/// character that could break out of the surrounding `bash -c` double-quoted
+/// string or inject a second SQL statement — `"`, `\`, backticks, `$`,
+/// `;`, newlines, and CR. The result is a plain token safe to embed in both
+/// a shell string and an SQL literal.
 pub fn shell_quote(s: &str) -> String {
-    s.replace('\'', "")
+    s.chars()
+        .filter(|c| !matches!(c, '\'' | '"' | '\\' | '`' | '$' | ';' | '\n' | '\r' | '\0'))
+        .collect()
 }
 
 #[cfg(test)]
@@ -247,6 +255,26 @@ mod tests {
         assert_eq!(shell_quote("a'b'c"), "abc");
         assert_eq!(shell_quote("'"), "");
         assert_eq!(shell_quote("O'Reilly"), "OReilly");
+    }
+
+    #[test]
+    fn shell_quote_strips_injection_chars() {
+        // Everything that could break out of the shell string or inject a
+        // second SQL statement is removed; innocuous chars (space, `/`)
+        // pass through.
+        assert_eq!(shell_quote("pw\"; rm -rf /"), "pw rm -rf /");
+        assert_eq!(shell_quote("pw$(whoami)"), "pw(whoami)");
+        assert_eq!(shell_quote("pw`id`"), "pwid");
+        assert_eq!(shell_quote("pw;DROP TABLE x;"), "pwDROP TABLE x");
+        assert_eq!(shell_quote("line1\nline2"), "line1line2");
+        assert_eq!(shell_quote("a\\b"), "ab");
+        assert_eq!(shell_quote("null\0char"), "nullchar");
+    }
+
+    #[test]
+    fn shell_quote_keeps_alphanumerics_and_common_punctuation() {
+        assert_eq!(shell_quote("p@ss-w0rd_1"), "p@ss-w0rd_1");
+        assert_eq!(shell_quote("ABCdef123-_@."), "ABCdef123-_@.");
     }
 
     #[test]

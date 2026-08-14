@@ -17,6 +17,10 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
+/// Maximum time a single shell command may run before it is killed. Prevents
+/// a hung `apt-get`/`php artisan`/etc. from wedging the install forever.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60 * 15);
+
 pub trait Exec: Send + Sync {
     fn run(&self, cmd: &str) -> Result<Output>;
 }
@@ -25,23 +29,101 @@ pub trait Exec: Send + Sync {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RealExec;
 
-impl Exec for RealExec {
-    fn run(&self, cmd: &str) -> Result<Output> {
-        tracing::info!(cmd, "running");
-        let bar = start_bar();
-        let output = Command::new("bash")
+impl RealExec {
+    /// Run a command with a hard timeout. The command runs in its own
+    /// process group (via `setsid`) so the whole tree can be killed if it
+    /// exceeds `timeout`. Stdout/stderr are drained concurrently to avoid
+    /// pipe-buffer deadlocks.
+    fn run_with_timeout(&self, cmd: &str, timeout: Duration) -> Result<Output> {
+        use std::io::Read;
+        use std::os::unix::process::CommandExt;
+        use std::time::Instant;
+
+        let mut command = Command::new("bash");
+        #[cfg(unix)]
+        unsafe {
+            command.pre_exec(|| {
+                // Become session/group leader so `killpg` below can reap the
+                // entire process tree (bash + any grandchildren).
+                let _ = nix::unistd::setsid();
+                Ok(())
+            });
+        }
+        let mut child = command
             .arg("-c")
             .arg(cmd)
             .stderr(Stdio::piped())
             .stdout(Stdio::piped())
-            .output()
+            .spawn()
             .with_context(|| format!("failed to spawn command: {cmd}"))?;
+
+        let mut stdout = child.stdout.take().unwrap();
+        let mut stderr = child.stderr.take().unwrap();
+        let out_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stdout.read_to_end(&mut buf);
+            buf
+        });
+        let err_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stderr.read_to_end(&mut buf);
+            buf
+        });
+
+        let deadline = Instant::now() + timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        #[cfg(unix)]
+                        {
+                            let _ = nix::sys::signal::killpg(
+                                nix::unistd::Pid::from_raw(child.id() as i32),
+                                nix::sys::signal::Signal::SIGKILL,
+                            );
+                        }
+                        let _ = child.wait();
+                        let stdout = out_thread.join().unwrap_or_default();
+                        let stderr = err_thread.join().unwrap_or_default();
+                        return Err(anyhow::anyhow!(
+                            "command timed out after {}s and was killed: {cmd}\nstdout: {}\nstderr: {}",
+                            timeout.as_secs(),
+                            String::from_utf8_lossy(&stdout),
+                            String::from_utf8_lossy(&stderr)
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    return Err(e).context("failed polling command");
+                }
+            }
+        };
+
+        let stdout = out_thread.join().unwrap_or_default();
+        let stderr = err_thread.join().unwrap_or_default();
+        Ok(Output {
+            status,
+            stdout,
+            stderr,
+        })
+    }
+}
+
+impl Exec for RealExec {
+    fn run(&self, cmd: &str) -> Result<Output> {
+        let log_cmd = crate::secrets::redact(cmd);
+        tracing::info!(cmd = log_cmd.as_str(), "running");
+        let bar = start_bar();
+        let output = self.run_with_timeout(cmd, DEFAULT_TIMEOUT)?;
         bar.finish_with_message("done");
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             anyhow::bail!(
-                "command failed ({}): {cmd}\nstderr: {stderr}\nstdout: {stdout}",
+                "command failed ({}): {log_cmd}\nstderr: {stderr}\nstdout: {stdout}",
                 output.status
             );
         }
@@ -167,5 +249,26 @@ mod tests {
         assert!(out.status.success());
         assert!(out.stdout.is_empty());
         assert!(out.stderr.is_empty());
+    }
+
+    #[test]
+    fn timeout_kills_hung_command() {
+        let real = RealExec;
+        // `sleep 5` with a 400ms budget must be killed and reported.
+        let err = real
+            .run_with_timeout("sleep 5", Duration::from_millis(400))
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("timed out"), "got: {msg}");
+        assert!(msg.contains("was killed"), "got: {msg}");
+    }
+
+    #[test]
+    fn fast_command_finishes_within_timeout() {
+        let real = RealExec;
+        let out = real
+            .run_with_timeout("echo fast", Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "fast");
     }
 }
