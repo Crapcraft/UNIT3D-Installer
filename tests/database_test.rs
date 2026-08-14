@@ -97,3 +97,54 @@ fn database_step_respects_non_interactive_defaults() {
     DatabaseStep.handle(&mut ctx).unwrap();
     assert!(exec.any("mariadb-server"));
 }
+
+#[test]
+fn mysql_root_password_is_shell_quoted() {
+    let (mut ctx, exec) = test_context_dry();
+    ctx.config.app.db_driver = DbDriver::Mysql;
+    ctx.config.app.db = "unit3d".to_string();
+    ctx.config.app.dbuser = "unit3d".to_string();
+    ctx.config.app.dbpass = "secretpass".to_string();
+    ctx.config.app.dbrootpass = "ro'otpw".to_string();
+
+    DatabaseStep.handle(&mut ctx).unwrap();
+
+    // shell_quote strips single quotes from the root password.
+    assert!(exec.any("mysqladmin -u root password rootpw"));
+    assert!(exec.any("IDENTIFIED WITH mysql_native_password BY 'rootpw'"));
+    // .my.cnf also gets the quoted password.
+    assert!(exec.any("chmod 600 /root/.my.cnf"));
+}
+
+#[test]
+fn database_step_removes_anonymous_and_remote_root() {
+    let (mut ctx, exec) = test_context_dry();
+    ctx.config.app.db_driver = DbDriver::MariaDb;
+    ctx.config.app.db = "unit3d".to_string();
+    ctx.config.app.dbuser = "unit3d".to_string();
+    ctx.config.app.dbpass = "secretpass".to_string();
+    ctx.config.app.dbrootpass = "rootpw".to_string();
+
+    DatabaseStep.handle(&mut ctx).unwrap();
+
+    assert!(exec.any("DELETE FROM mysql.user WHERE User=''"));
+    assert!(exec.any("Host NOT IN ('localhost', '127.0.0.1', '::1')"));
+    assert!(exec.any("DROP DATABASE IF EXISTS test"));
+    assert!(exec.any("DELETE FROM mysql.db WHERE Db='test'"));
+}
+
+#[test]
+fn mariadb_init_uses_mariadbd() {
+    let (mut ctx, exec) = test_context_dry();
+    ctx.config.app.db_driver = DbDriver::MariaDb;
+    ctx.config.app.db = "unit3d".to_string();
+    ctx.config.app.dbuser = "unit3d".to_string();
+    ctx.config.app.dbpass = "secretpass".to_string();
+    ctx.config.app.dbrootpass = "rootpw".to_string();
+
+    DatabaseStep.handle(&mut ctx).unwrap();
+
+    assert!(exec.any("mariadbd --initialize-insecure"));
+    assert!(exec.any("update-rc.d mariadb defaults"));
+    assert!(exec.any("service mariadb start"));
+}

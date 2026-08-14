@@ -309,4 +309,95 @@ mod tests {
         assert!(!ctx.config.app.dbpass.is_empty());
         assert_eq!(ctx.config.app.meilisearch_key.len(), 32);
     }
+
+    #[test]
+    fn autoset_passwords_keep_existing() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.password = "my-owner-pass".to_string();
+        ctx.config.app.dbpass = "my-db-pass".to_string();
+        ctx.config.app.meilisearch_key = "0123456789abcdef0123456789abcdef".to_string();
+        autoset_passwords(&mut ctx);
+        assert_eq!(ctx.config.app.password, "my-owner-pass");
+        assert_eq!(ctx.config.app.dbpass, "my-db-pass");
+        assert_eq!(
+            ctx.config.app.meilisearch_key,
+            "0123456789abcdef0123456789abcdef"
+        );
+    }
+
+    #[test]
+    fn meilisearch_generates_key_when_blank() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.meilisearch_key.clear();
+        meilisearch(&mut ctx);
+        assert_eq!(ctx.config.app.meilisearch_key.len(), 32);
+    }
+
+    #[test]
+    fn server_accepts_valid_fqdn_default() {
+        // Non-interactive: prompter returns the config's pre-set hostname.
+        // A dotted FQDN passes the validation loop without bailing.
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.hostname = "tracker.example.com".to_string();
+        // server() requires a hostname default; the rest of the prompts use
+        // defaults. It must not bail.
+        let result = server(&mut ctx);
+        assert!(result.is_ok());
+        assert_eq!(ctx.config.app.hostname, "tracker.example.com");
+    }
+
+    #[test]
+    fn server_rejects_bare_hostname_in_non_interactive() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.hostname = "myserver".to_string();
+        let err = server(&mut ctx).unwrap_err();
+        assert!(err.to_string().contains("FQDN"));
+        assert!(err.to_string().contains("non-interactive"));
+    }
+
+    #[test]
+    fn server_accepts_localhost_shortcut() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.hostname = "localhost".to_string();
+        assert!(server(&mut ctx).is_ok());
+    }
+
+    #[test]
+    fn user_uses_email_fallback_from_hostname() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.hostname = "tracker.example.com".to_string();
+        ctx.config.app.owner = "UNIT3D".to_string();
+        user(&mut ctx).unwrap();
+        assert_eq!(ctx.config.app.owner_email, "admin@tracker.example.com");
+    }
+
+    #[test]
+    fn chat_parses_port_or_keeps_default() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.echo_port = 0;
+        chat(&mut ctx).unwrap();
+        // Non-interactive returns default "8443", parsed to u16.
+        assert_eq!(ctx.config.app.echo_port, 8443);
+    }
+
+    #[test]
+    fn database_prompts_fill_defaults_non_interactive() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        // Clear user-provided fields so the defaults apply.
+        ctx.config.app.db.clear();
+        ctx.config.app.dbuser.clear();
+        database(&mut ctx).unwrap();
+        assert_eq!(ctx.config.app.db, "unit3d");
+        assert_eq!(ctx.config.app.dbuser, "unit3d");
+        // Auto-generated DB password when left blank.
+        assert!(!ctx.config.app.dbpass.is_empty());
+    }
 }

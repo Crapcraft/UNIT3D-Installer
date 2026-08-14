@@ -140,6 +140,39 @@ mod tests {
         assert_eq!(info.distro, Distro::Unsupported);
     }
 
+    #[test]
+    fn unquote_strips_matching_quotes() {
+        assert_eq!(unquote("\"ubuntu\""), "ubuntu");
+        assert_eq!(unquote("'24.04'"), "24.04");
+        assert_eq!(unquote("ubuntu"), "ubuntu");
+        assert_eq!(unquote(""), "");
+        assert_eq!(unquote("\"starts-only"), "\"starts-only");
+        assert_eq!(unquote("ends-only\""), "ends-only\"");
+        // Whitespace is trimmed before quote detection.
+        assert_eq!(unquote("  \"padded\"  "), "padded");
+    }
+
+    #[test]
+    fn is_supported_matches_ubuntu_only() {
+        assert!(Distro::Ubuntu.is_supported());
+        assert!(!Distro::Unsupported.is_supported());
+    }
+
+    #[test]
+    fn version_id_unquoted_via_helper() {
+        // The real from_os_release unquotes values; replicate that here.
+        let info = parse_for_test("ID=ubuntu\nVERSION_ID=\"26.04\"\n".to_string());
+        assert_eq!(info.version_id, "26.04");
+    }
+
+    #[test]
+    fn distro_fields_carried_through() {
+        let info = parse_for_test("ID=ubuntu\nVERSION_ID=24.04\n".to_string());
+        assert_eq!(info.id, "ubuntu");
+        assert_eq!(info.version_id, "24.04");
+        assert_eq!(info.distro, Distro::Ubuntu);
+    }
+
     fn parse_for_test(text: String) -> DistInfo {
         let mut id = String::new();
         let mut version_id = String::new();

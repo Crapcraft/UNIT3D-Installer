@@ -96,3 +96,108 @@ impl Steps {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Args;
+    use clap::Parser;
+    use tempfile::tempdir;
+
+    #[test]
+    fn build_selects_dry_exec_when_dry_run() {
+        let args = Args::parse_from(["unit3d-installer", "--dry-run", "--non-interactive"]);
+        let ctx = Context::build(&args).unwrap();
+        assert!(ctx.dry_run);
+        assert!(ctx.non_interactive);
+        // DryExec must succeed without touching the system.
+        ctx.run("echo hello").unwrap();
+        ctx.run_all(["echo a".to_string(), "echo b".to_string()])
+            .unwrap();
+    }
+
+    #[test]
+    fn build_uses_real_exec_by_default() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let ctx = Context::build(&args).unwrap();
+        assert!(!ctx.dry_run);
+        // RealExec runs `true` fine.
+        ctx.run("true").unwrap();
+    }
+
+    #[test]
+    fn write_file_dry_run_does_not_touch_disk() {
+        let args = Args::parse_from(["unit3d-installer", "--dry-run"]);
+        let ctx = Context::build(&args).unwrap();
+        let tmp = tempdir().unwrap();
+        let target = tmp.path().join("nested/deep/out.txt");
+        ctx.write_file(&target, "contents").unwrap();
+        // Parent directories must NOT have been created in dry-run mode.
+        assert!(!tmp.path().join("nested").exists());
+    }
+
+    #[test]
+    fn write_file_creates_parent_dirs() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let ctx = Context::build(&args).unwrap();
+        let tmp = tempdir().unwrap();
+        let target = tmp.path().join("a/b/c.txt");
+        ctx.write_file(&target, "hello").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello");
+    }
+
+    #[test]
+    fn write_file_overwrites_existing() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let ctx = Context::build(&args).unwrap();
+        let tmp = tempdir().unwrap();
+        let target = tmp.path().join("f.txt");
+        std::fs::write(&target, "old").unwrap();
+        ctx.write_file(&target, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+    }
+
+    #[test]
+    fn run_all_short_circuits_on_failure() {
+        struct Boom;
+        impl Exec for Boom {
+            fn run(&self, cmd: &str) -> Result<std::process::Output> {
+                if cmd == "fail" {
+                    anyhow::bail!("boom");
+                }
+                Ok(std::process::Output {
+                    status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                })
+            }
+        }
+        let ctx = Context {
+            config: Config::default(),
+            prompter: Prompter::new(true),
+            style: Style,
+            exec: Arc::new(Boom),
+            dry_run: false,
+            non_interactive: true,
+            config_path: None,
+        };
+        let res = ctx.run_all(["ok".to_string(), "fail".to_string(), "never".to_string()]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn config_path_is_forwarded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg_path = tmp.path().join("cfg.toml");
+        std::fs::write(&cfg_path, "[app]\nhostname = \"x.com\"\n").unwrap();
+        let args = Args::parse_from([
+            "unit3d-installer",
+            "--config",
+            cfg_path.to_str().unwrap(),
+            "--dry-run",
+        ]);
+        let ctx = Context::build(&args).unwrap();
+        assert_eq!(ctx.config_path.as_deref(), Some(cfg_path.as_path()));
+        assert_eq!(ctx.config.app.hostname, "x.com");
+    }
+}

@@ -58,6 +58,7 @@ fn init_tracing(verbosity: u8) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::cli::Args;
     use clap::Parser;
 
@@ -100,5 +101,17 @@ mod tests {
         assert!(!args.dry_run);
         assert!(args.config.is_none());
         assert_eq!(args.verbosity, 0);
+    }
+
+    #[test]
+    fn intro_renders_without_panic() {
+        print_intro();
+    }
+
+    #[test]
+    fn init_tracing_never_panics_for_any_verbosity() {
+        for v in 0..=5 {
+            init_tracing(v);
+        }
     }
 }

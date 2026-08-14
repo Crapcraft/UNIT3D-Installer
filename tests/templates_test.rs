@@ -8,6 +8,7 @@ use askama::Template;
 use unit3d_installer::resources::credentials::CredentialsTemplate;
 use unit3d_installer::resources::echo_server::EchoServerTemplate;
 use unit3d_installer::resources::env::EnvTemplate;
+use unit3d_installer::resources::intro::IntroTemplate;
 use unit3d_installer::resources::meilisearch_toml::MeilisearchTomlTemplate;
 use unit3d_installer::resources::meilisearch_unit::MeilisearchUnitTemplate;
 use unit3d_installer::resources::my_cnf::MyCnfTemplate;
@@ -123,5 +124,72 @@ fn credentials_snapshot() {
         install_dir: "/var/www/unit3d",
         php_version: "8.5",
         web_user: "www-data",
+    }));
+}
+
+#[test]
+fn intro_snapshot() {
+    insta::assert_snapshot!(render(&IntroTemplate));
+}
+
+#[test]
+fn env_snapshot_postgres_no_socket() {
+    insta::assert_snapshot!(render(&EnvTemplate {
+        protocol: "http",
+        fqdn: "tracker.example.com",
+        db_driver: "pgsql",
+        db: "unit3d",
+        dbuser: "unit3d",
+        dbpass: "secret",
+        socket: "",
+        owner: "admin",
+        owner_email: "admin@tracker.example.com",
+        owner_password: "ownerpass",
+        tmdb_key: "",
+        mail_driver: "smtp",
+        mail_host: "smtp.gmail.com",
+        mail_port: "587",
+        mail_username: "user@example.com",
+        mail_password: "mailpass",
+        mail_from_name: "UNIT3D",
+        meilisearch_key: "masterkey",
+        redis_host: "/var/run/redis/redis.sock",
+        redis_port: "-1",
+    }));
+}
+
+#[test]
+fn echo_server_snapshot_http_no_ssl() {
+    insta::assert_snapshot!(render(&EchoServerTemplate {
+        protocol: "http",
+        fqdn: "tracker.example.com",
+        port: 6001,
+        ssl_cert: "",
+        ssl_key: "",
+        ssl_chain: "",
+    }));
+}
+
+#[test]
+fn my_cnf_snapshot_empty_password() {
+    insta::assert_snapshot!(render(&MyCnfTemplate { password: "" }));
+}
+
+#[test]
+fn credentials_snapshot_http_variant() {
+    insta::assert_snapshot!(render(&CredentialsTemplate {
+        generated: "2026-08-07T00:00:00Z",
+        fqdn: "sub.example.com",
+        owner: "owner",
+        owner_email: "owner@example.com",
+        owner_password: "opass",
+        db_name: "unit3d",
+        db_user: "unit3d",
+        db_pass: "dpass",
+        db_root_pass: "rpass",
+        meilisearch_key: "mkey",
+        install_dir: "/srv/unit3d",
+        php_version: "8.5",
+        web_user: "ubuntu",
     }));
 }

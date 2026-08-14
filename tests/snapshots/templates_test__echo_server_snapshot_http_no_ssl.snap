@@ -1,0 +1,38 @@
+---
+source: tests/templates_test.rs
+expression: "render(&EchoServerTemplate\n{\n    protocol: \"http\", fqdn: \"tracker.example.com\", port: 6001, ssl_cert: \"\",\n    ssl_key: \"\", ssl_chain: \"\",\n})"
+---
+{
+    "authHost": "http://tracker.example.com",
+    "authEndpoint": "/broadcasting/auth",
+    "clients": [],
+    "database": "redis",
+    "databaseConfig": {
+        "redis": {
+            "host": "127.0.0.1",
+            "port": 6379
+        },
+        "sqlite": {
+            "databasePath": "/database/laravel-echo-server.sqlite"
+        }
+    },
+    "devMode": false,
+    "host": "127.0.0.1",
+    "port": 6001,
+    "protocol": "http",
+    "socketio": {},
+    "sslCertPath": "",
+    "sslKeyPath": "",
+    "sslCertChainPath": "",
+    "sslPassphrase": "",
+    "subscribers": {
+        "http": true,
+        "redis": true
+    },
+    "apiOriginAllow": {
+        "allowCors": true,
+        "allowOrigin": "http://tracker.example.com",
+        "allowMethods": "GET, POST",
+        "allowHeaders": "Origin, Content-Type, X-Auth-Token, X-Requested-With, Accept, Authorization, X-CSRF-TOKEN, X-Socket-Id"
+    }
+}

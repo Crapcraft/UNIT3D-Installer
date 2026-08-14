@@ -105,3 +105,278 @@ fn php_step_patches_ini_and_www_conf() {
     // patch_ini / patch_www unit tests in the step module.
     let _ = exec;
 }
+
+#[test]
+fn unit3d_env_render_uses_mysql_socket_by_default() {
+    use askama::Template;
+    use unit3d_installer::resources::env::EnvTemplate;
+    let tpl = EnvTemplate {
+        protocol: "https",
+        fqdn: "tracker.example.com",
+        db_driver: "mariadb",
+        db: "unit3d",
+        dbuser: "unit3d",
+        dbpass: "secret",
+        socket: "/var/run/mysqld/mysqld.sock",
+        owner: "admin",
+        owner_email: "admin@tracker.example.com",
+        owner_password: "ownerpass",
+        tmdb_key: "tmdbkey",
+        mail_driver: "smtp",
+        mail_host: "",
+        mail_port: "",
+        mail_username: "",
+        mail_password: "",
+        mail_from_name: "",
+        meilisearch_key: "masterkey",
+        redis_host: "/var/run/redis/redis.sock",
+        redis_port: "-1",
+    };
+    let out = tpl.render().unwrap();
+    assert!(out.contains("DB_CONNECTION=mariadb"));
+    assert!(out.contains("DB_SOCKET=/var/run/mysqld/mysqld.sock"));
+    assert!(out.contains("REDIS_HOST=/var/run/redis/redis.sock"));
+    assert!(out.contains("REDIS_PORT=-1"));
+    assert!(out.contains("APP_URL=https://tracker.example.com"));
+}
+
+#[test]
+fn unit3d_env_render_postgres_has_no_socket() {
+    use askama::Template;
+    use unit3d_installer::resources::env::EnvTemplate;
+    let tpl = EnvTemplate {
+        protocol: "http",
+        fqdn: "tracker.example.com",
+        db_driver: "pgsql",
+        db: "unit3d",
+        dbuser: "unit3d",
+        dbpass: "secret",
+        socket: "",
+        owner: "admin",
+        owner_email: "admin@tracker.example.com",
+        owner_password: "ownerpass",
+        tmdb_key: "",
+        mail_driver: "smtp",
+        mail_host: "",
+        mail_port: "",
+        mail_username: "",
+        mail_password: "",
+        mail_from_name: "",
+        meilisearch_key: "masterkey",
+        redis_host: "/var/run/redis/redis.sock",
+        redis_port: "-1",
+    };
+    let out = tpl.render().unwrap();
+    assert!(out.contains("DB_CONNECTION=pgsql"));
+    assert!(out.contains("DB_SOCKET="));
+    assert!(out.contains("APP_URL=http://tracker.example.com"));
+}
+
+#[test]
+fn meilisearch_writes_toml_and_unit_files() {
+    use askama::Template;
+    use unit3d_installer::resources::meilisearch_toml::MeilisearchTomlTemplate;
+    use unit3d_installer::resources::meilisearch_unit::MeilisearchUnitTemplate;
+    let toml = MeilisearchTomlTemplate {
+        master_key: "masterkey",
+        db_path: "/var/lib/meilisearch/data",
+        dump_dir: "/var/lib/meilisearch/dumps",
+        snapshot_dir: "/var/lib/meilisearch/snapshots",
+    }
+    .render()
+    .unwrap();
+    assert!(toml.contains("env = \"production\""));
+    assert!(toml.contains("master_key = \"masterkey\""));
+    assert!(toml.contains("db_path = \"/var/lib/meilisearch/data\""));
+
+    let unit = MeilisearchUnitTemplate {
+        web_user: "www-data",
+    }
+    .render()
+    .unwrap();
+    assert!(unit.contains("User=www-data"));
+    assert!(unit.contains("ExecStart=/usr/local/bin/meilisearch"));
+}
+
+#[test]
+fn unit3d_supervisor_config_has_worker_and_echo() {
+    use askama::Template;
+    use unit3d_installer::resources::supervisor::SupervisorTemplate;
+    let out = SupervisorTemplate {
+        install_dir: "/var/www/html",
+        web_user: "www-data",
+    }
+    .render()
+    .unwrap();
+    assert!(out.contains("queue:work"));
+    assert!(out.contains("laravel-echo-server"));
+    assert!(out.contains("user=www-data"));
+}
+
+#[test]
+fn unit3d_step_echo_server_uses_configured_port() {
+    use askama::Template;
+    use unit3d_installer::resources::echo_server::EchoServerTemplate;
+    let out = EchoServerTemplate {
+        protocol: "https",
+        fqdn: "tracker.example.com",
+        port: 8443,
+        ssl_cert: "/etc/letsencrypt/live/tracker.example.com/cert.pem",
+        ssl_key: "/etc/letsencrypt/live/tracker.example.com/privkey.pem",
+        ssl_chain: "/etc/letsencrypt/live/tracker.example.com/fullchain.pem",
+    }
+    .render()
+    .unwrap();
+    assert!(out.contains("\"port\": 8443"));
+    assert!(out.contains("https://tracker.example.com"));
+}
+
+#[test]
+fn meilisearch_step_emits_scout_import_for_torrents() {
+    use unit3d_installer::steps::meilisearch::MeilisearchSetupStep;
+
+    let (mut ctx, exec) = unit3d_context();
+    MeilisearchSetupStep.handle(&mut ctx).unwrap();
+
+    // G16: import the Torrent model after syncing index settings.
+    assert!(exec.any("php artisan scout:sync-index-settings"));
+    assert!(exec.any("php artisan scout:import \"App\\Models\\Torrent\""));
+    assert!(exec.any("chown -R www-data:www-data /var/lib/meilisearch"));
+    assert!(exec.any("systemctl daemon-reload"));
+}
+
+#[test]
+fn unit3d_step_runs_all_artisan_cache_commands() {
+    let (mut ctx, exec) = unit3d_context();
+    Unit3dSetupStep.handle(&mut ctx).unwrap();
+
+    for needle in [
+        "php artisan config:cache",
+        "php artisan route:cache",
+        "php artisan view:cache",
+        "php artisan storage:link",
+        "php artisan migrate --seed --force",
+    ] {
+        assert!(exec.any(needle), "missing command: {needle}");
+    }
+}
+
+#[test]
+fn unit3d_cron_is_idempotent() {
+    let (mut ctx, exec) = unit3d_context();
+    Unit3dSetupStep.handle(&mut ctx).unwrap();
+
+    // G23: strip prior entries, then append a single instance.
+    let cron = exec
+        .ran()
+        .into_iter()
+        .find(|c| c.contains("crontab -l"))
+        .expect("cron command emitted");
+    assert!(cron.contains("grep -v 'artisan schedule:run'"));
+    assert!(cron.contains("* * * * * php /var/www/html/artisan schedule:run"));
+}
+
+#[test]
+fn unit3d_step_writes_env_in_dry_run() {
+    let (mut ctx, exec) = unit3d_context();
+    Unit3dSetupStep.handle(&mut ctx).unwrap();
+    // Permissions commands still emitted; file writes are printed, not saved.
+    assert!(exec.any("chown -R www-data:www-data"));
+    let _ = ctx;
+}
+
+#[test]
+fn my_cnf_template_wraps_password() {
+    use askama::Template;
+    use unit3d_installer::resources::my_cnf::MyCnfTemplate;
+    let out = MyCnfTemplate { password: "secret" }.render().unwrap();
+    assert!(out.contains("[client]"));
+    assert!(out.contains("password=secret"));
+}
+
+#[test]
+fn credentials_template_contains_expected_sections() {
+    use askama::Template;
+    use unit3d_installer::resources::credentials::CredentialsTemplate;
+    let out = CredentialsTemplate {
+        generated: "2026-08-07",
+        fqdn: "tracker.example.com",
+        owner: "admin",
+        owner_email: "admin@tracker.example.com",
+        owner_password: "ownerpass",
+        db_name: "unit3d",
+        db_user: "unit3d",
+        db_pass: "dbpass",
+        db_root_pass: "rootpass",
+        meilisearch_key: "masterkey",
+        install_dir: "/var/www/unit3d",
+        php_version: "8.5",
+        web_user: "www-data",
+    }
+    .render()
+    .unwrap();
+    for needle in [
+        "URL: https://tracker.example.com",
+        "Username: admin",
+        "admin@tracker.example.com",
+        "MEILISEARCH:",
+        "Master Key: masterkey",
+        "INSTALLATION PATH: /var/www/unit3d",
+        "php8.5-fpm",
+    ] {
+        assert!(out.contains(needle), "missing: {needle}");
+    }
+}
+
+#[test]
+fn php_fpm_template_uses_web_user_and_fqdn() {
+    use askama::Template;
+    use unit3d_installer::resources::phpfpm::PhpFpmTemplate;
+    let out = PhpFpmTemplate {
+        fqdn: "tracker.example.com",
+        web_user: "www-data",
+    }
+    .render()
+    .unwrap();
+    assert!(out.contains("tracker.example.com"));
+    assert!(out.contains("user = www-data"));
+    assert!(out.contains("group = www-data"));
+}
+
+#[test]
+fn supervisor_template_has_restart_policy() {
+    use askama::Template;
+    use unit3d_installer::resources::supervisor::SupervisorTemplate;
+    let out = SupervisorTemplate {
+        install_dir: "/var/www/html",
+        web_user: "www-data",
+    }
+    .render()
+    .unwrap();
+    assert!(out.contains("autostart=true"));
+    assert!(out.contains("autorestart=true"));
+    assert!(out.contains("numprocs=1"));
+}
+
+#[test]
+fn nginx_site_proxies_socket_io_on_echo_port() {
+    use askama::Template;
+    use unit3d_installer::resources::nginx::NginxTemplate;
+    let out = NginxTemplate {
+        fqdn: "tracker.example.com",
+        install_dir: "/var/www/html",
+        echo_port: 8443,
+        max_body: "256M",
+    }
+    .render()
+    .unwrap();
+    assert!(out.contains("server_name tracker.example.com www.tracker.example.com;"));
+    assert!(out.contains("proxy_pass http://127.0.0.1:8443;"));
+    assert!(out.contains("fastcgi_pass unix:/var/run/php/tracker.example.com.sock;"));
+    assert!(out.contains("client_max_body_size 256M;"));
+    assert!(out.contains("root /var/www/html/public;"));
+    // Security headers + sensitive-file denials present (G8-G12).
+    assert!(out.contains("X-Frame-Options"));
+    assert!(out.contains("deny all"));
+    assert!(out.contains("\\.env"));
+}

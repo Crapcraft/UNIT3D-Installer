@@ -116,3 +116,59 @@ fn version_flag_prints_version() {
         .success()
         .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
 }
+
+#[test]
+fn yes_to_all_alias_works_in_dry_run() {
+    let mut cmd = Command::cargo_bin("unit3d-installer").unwrap();
+    let out = cmd
+        .args(["--yes-to-all", "--dry-run", "--config", EXAMPLE_CONFIG])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = strip_ansi(&String::from_utf8_lossy(&out.stdout));
+    assert!(stdout.contains("UNIT3D Installation Complete!"));
+}
+
+#[test]
+fn dry_run_uses_node_24_and_echo_port() {
+    let stdout = dry_run_stdout();
+    assert!(stdout.contains("setup_24.x"));
+    assert!(stdout.contains("ufw allow 8443"));
+    assert!(stdout.contains("php artisan scout:sync-index-settings"));
+    assert!(stdout.contains("sudo -u www-data bash"));
+}
+
+#[test]
+fn invalid_flag_is_rejected() {
+    let mut cmd = Command::cargo_bin("unit3d-installer").unwrap();
+    cmd.arg("--definitely-not-a-flag")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unexpected argument"));
+}
+
+#[test]
+fn dry_run_prints_credentials_block() {
+    let stdout = dry_run_stdout();
+    assert!(stdout.contains("UNIT3D Installation Credentials"));
+    assert!(stdout.contains("URL:"));
+    assert!(stdout.contains("OWNER LOGIN:"));
+    assert!(stdout.contains("DATABASE:"));
+    assert!(stdout.contains("MEILISEARCH:"));
+    assert!(stdout.contains("KEEP THIS FILE SECURE"));
+}
+
+#[test]
+fn dry_run_writes_no_files_to_cwd() {
+    // The dry-run must not create anything under the current directory.
+    let before: Vec<_> = std::fs::read_dir(".")
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    let _ = dry_run_stdout();
+    let after: Vec<_> = std::fs::read_dir(".")
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(before.len(), after.len());
+}

@@ -513,4 +513,120 @@ mod tests {
         assert_eq!(cfg.install_dir(), Path::new("/var/www/html"));
         assert_eq!(cfg.web_user(), "www-data");
     }
+
+    #[test]
+    fn malformed_toml_returns_parse_error() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "[app\nhostname = ").unwrap();
+        let err = Config::load(Some(tmp.path())).unwrap_err();
+        assert!(matches!(err, ConfigError::Parse(_)));
+    }
+
+    #[test]
+    fn missing_file_returns_read_error() {
+        let err = Config::load(Some(Path::new("/no/such/file.toml"))).unwrap_err();
+        assert!(matches!(err, ConfigError::Read(..)));
+    }
+
+    #[test]
+    fn load_full_config_overrides_all_sections() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[app]
+hostname = "tracker.example.com"
+ssl = false
+owner = "admin"
+db_driver = "Mysql"
+db = "tracker_db"
+dbuser = "tracker"
+echo_port = 6001
+
+[unit3d]
+tag = "v9.1.0"
+
+[os.ubuntu]
+install_dir = "/srv/unit3d"
+web_user = "ubuntu"
+"#,
+        )
+        .unwrap();
+        let cfg = Config::load(Some(tmp.path())).unwrap();
+        assert_eq!(cfg.app.hostname, "tracker.example.com");
+        assert!(!cfg.app.ssl);
+        assert_eq!(cfg.app.owner, "admin");
+        assert_eq!(cfg.app.db_driver, DbDriver::Mysql);
+        assert_eq!(cfg.app.db, "tracker_db");
+        assert_eq!(cfg.app.dbuser, "tracker");
+        assert_eq!(cfg.app.echo_port, 6001);
+        assert_eq!(cfg.unit3d.tag, "v9.1.0");
+        assert_eq!(cfg.os.ubuntu.install_dir, PathBuf::from("/srv/unit3d"));
+        assert_eq!(cfg.os.ubuntu.web_user, "ubuntu");
+        // Unspecified fields fall back to defaults.
+        assert_eq!(cfg.app.mail_driver, "smtp");
+        assert_eq!(cfg.app.mail_port, "587");
+        assert_eq!(cfg.app.branch, "master");
+    }
+
+    #[test]
+    fn invalid_db_driver_value_is_rejected() {
+        let cfg: Result<Config, _> = toml::from_str("[app]\ndb_driver = \"oracle\"\n");
+        assert!(cfg.is_err());
+    }
+
+    #[test]
+    fn unknown_fields_are_ignored() {
+        // serde defaults ignore unknown keys, keeping forward compatibility.
+        let cfg: Config = toml::from_str("[app]\nfuture_field = 42\n").unwrap();
+        assert_eq!(cfg.app.db_driver, DbDriver::MariaDb);
+    }
+
+    #[test]
+    fn os_section_partial_falls_back() {
+        let cfg: Config = toml::from_str("[os.ubuntu]\nweb_user = \"www-data\"\n").unwrap();
+        assert_eq!(cfg.os.ubuntu.web_user, "www-data");
+        // pkg_manager default preserved.
+        assert_eq!(cfg.os.ubuntu.pkg_manager, "apt-get");
+    }
+
+    #[test]
+    fn echo_port_bounds_are_u16() {
+        let ok: Config = toml::from_str("[app]\necho_port = 65535\n").unwrap();
+        assert_eq!(ok.app.echo_port, 65535);
+        let err: Result<Config, _> = toml::from_str("[app]\necho_port = 70000\n");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn example_config_file_parses() {
+        // The shipped example must remain valid TOML and parse cleanly.
+        let text = include_str!("../../unit3d-installer.example.toml");
+        let cfg: Config = toml::from_str(text).unwrap();
+        assert!(!cfg.app.hostname.is_empty());
+    }
+
+    #[test]
+    fn roundtrip_serialize_contains_all_sections() {
+        let cfg = Config::default();
+        let s = toml::to_string(&cfg).unwrap();
+        assert!(s.contains("[unit3d]"));
+        assert!(s.contains("[app]"));
+        assert!(s.contains("[os.ubuntu]"));
+    }
+
+    #[test]
+    fn software_packages_include_all_db_servers() {
+        let sw = SoftwareSection::default();
+        for key in ["mysql-server", "mariadb-server", "postgresql"] {
+            assert!(sw.packages.contains_key(key), "missing {key}");
+        }
+    }
+
+    #[test]
+    fn no_cruft_in_package_descriptions() {
+        for (pkg, desc) in &SoftwareSection::default().packages {
+            assert!(!desc.contains('{') && !desc.contains('}'), "{pkg}");
+        }
+    }
 }

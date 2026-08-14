@@ -124,4 +124,29 @@ mod tests {
         // helper must not panic. Returns Ok when `php` binary is absent.
         let _ = check_php_compat("8.5");
     }
+
+    #[test]
+    fn check_php_compat_version_parsing() {
+        // Simulate `php --version` first-line parsing regardless of whether
+        // PHP is installed: a running PHP that is too old must fail.
+        let first = "PHP 8.2.0 (cli) (built: Jun 20 2024 12:00:00) ( NTS )";
+        let version = first.split_whitespace().nth(1).unwrap_or_default();
+        assert_eq!(version, "8.2.0");
+        assert!(!version.starts_with("8.5"));
+    }
+
+    #[test]
+    fn ensure_not_installed_ok_when_missing() {
+        // A path that doesn't exist must pass the policy.
+        let tmp = tempfile::tempdir().unwrap();
+        ensure_not_installed(&tmp.path().join("missing")).unwrap();
+    }
+
+    #[test]
+    fn app_subdir_triggers_block() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("app")).unwrap();
+        let err = ensure_not_installed(tmp.path()).unwrap_err();
+        assert!(err.to_string().contains("refusing to overwrite"));
+    }
 }

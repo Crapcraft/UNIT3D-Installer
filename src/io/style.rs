@@ -87,3 +87,32 @@ impl Style {
         println!();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every style method must render without panicking on a default config.
+    #[test]
+    fn style_methods_render_without_panic() {
+        let s = Style;
+        let cfg = crate::config::Config::default();
+        s.head("Test");
+        s.ok();
+        s.warning("warn");
+        s.info("info");
+        s.error("err");
+        s.section("sec");
+        s.sep();
+        s.final_summary(&cfg);
+    }
+
+    #[test]
+    fn final_summary_with_partial_config() {
+        let mut cfg = crate::config::Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        cfg.app.owner = "admin".to_string();
+        cfg.app.password = "pw".to_string();
+        Style.final_summary(&cfg);
+    }
+}

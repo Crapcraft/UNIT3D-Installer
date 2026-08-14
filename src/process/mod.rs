@@ -130,4 +130,42 @@ mod tests {
         let s = success_status();
         assert!(s.success());
     }
+
+    #[test]
+    fn real_exec_reports_missing_command() {
+        // `bash -c 'definitely-not-a-command-xyz'` spawns bash fine but the
+        // command is not found (exit 127) — the error must mention it.
+        let err = RealExec.run("definitely-not-a-command-xyz").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("command failed"), "got: {msg}");
+        assert!(
+            msg.contains("127") || msg.contains("not found"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn real_exec_runs_pipelines() {
+        let out = RealExec.run("printf 'a\\nb\\n' | wc -l").unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
+    }
+
+    #[test]
+    fn real_exec_surfaces_failure_details() {
+        let err = RealExec.run("echo out; echo oops >&2; exit 7").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("command failed"), "got: {msg}");
+        assert!(msg.contains("out"), "stdout should be in error: {msg}");
+        assert!(msg.contains("oops"), "stderr should be in error: {msg}");
+        assert!(msg.contains("7"), "exit code should be in error: {msg}");
+    }
+
+    #[test]
+    fn dry_exec_echoes_command_to_stdout() {
+        // Capture the printed "$ cmd" line.
+        let out = DryExec.run("echo hi").unwrap();
+        assert!(out.status.success());
+        assert!(out.stdout.is_empty());
+        assert!(out.stderr.is_empty());
+    }
 }

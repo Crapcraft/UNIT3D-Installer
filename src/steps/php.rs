@@ -144,6 +144,35 @@ fn find_fpm_services() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::process::Exec;
+    use std::sync::{Arc, Mutex};
+
+    struct Recording(Arc<Mutex<Vec<String>>>);
+
+    impl Exec for Recording {
+        fn run(&self, cmd: &str) -> Result<std::process::Output> {
+            self.0.lock().unwrap().push(cmd.to_string());
+            Ok(std::process::Output {
+                status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    fn recording_ctx() -> (Context, Arc<Mutex<Vec<String>>>) {
+        let cmds = Arc::new(Mutex::new(Vec::new()));
+        let ctx = Context {
+            config: crate::config::Config::default(),
+            prompter: crate::io::Prompter::new(true),
+            style: crate::io::Style,
+            exec: Arc::new(Recording(cmds.clone())),
+            dry_run: false,
+            non_interactive: true,
+            config_path: None,
+        };
+        (ctx, cmds)
+    }
 
     #[test]
     fn pool_dirs_no_panic() {
@@ -155,5 +184,65 @@ mod tests {
     #[test]
     fn find_matches_no_panic() {
         let _ = find_matches("/etc/php*/**/php.ini");
+    }
+
+    #[test]
+    fn patch_ini_emits_expected_seds() {
+        let (ctx, cmds) = recording_ctx();
+        let p = std::path::Path::new("/etc/php/8.5/cli/php.ini");
+        patch_ini(p, "/var/www/html", "www-data", &ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(cmds.iter().any(|c| c.contains("date.timezone = UTC")));
+        assert!(cmds.iter().any(|c| c.contains("cgi.fix_pathinfo=0")));
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("upload_max_filesize = 256M"))
+        );
+        assert!(cmds.iter().any(|c| c.contains("memory_limit = 512M")));
+        assert!(cmds.iter().any(|c| c.contains("max_execution_time = 600")));
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("opcache.memory_consumption=256"))
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("opcache.jit_buffer_size=256M"))
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("opcache.preload='/var/www/html/preload.php'"))
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("opcache.preload_user=www-data"))
+        );
+        assert!(cmds.iter().any(|c| c.contains("/etc/php/8.5/cli/php.ini")));
+    }
+
+    #[test]
+    fn patch_www_emits_pm_static_and_children() {
+        let (ctx, cmds) = recording_ctx();
+        let p = std::path::Path::new("/etc/php/8.5/fpm/pool.d/www.conf");
+        patch_www(p, &ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(cmds.iter().any(|c| c.contains("pm = static")));
+        assert!(cmds.iter().any(|c| c.contains("pm.max_children = 50")));
+        assert!(cmds.iter().any(|c| c.contains("pm.start_servers = 10")));
+        assert!(cmds.iter().any(|c| c.contains("pm.min_spare_servers = 5")));
+        assert!(cmds.iter().any(|c| c.contains("pm.max_spare_servers = 20")));
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("request_terminate_timeout = 600"))
+        );
+    }
+
+    #[test]
+    fn find_fpm_services_falls_back_to_85() {
+        // Regardless of what's on the box, the fallback ensures a service.
+        let svcs = find_fpm_services();
+        assert!(
+            svcs.iter()
+                .any(|s| s.contains("php8.5-fpm") || s.starts_with("php"))
+        );
     }
 }
