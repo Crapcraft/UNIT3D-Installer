@@ -330,6 +330,12 @@ pub enum ConfigError {
     Read(PathBuf, std::io::Error),
     #[error("failed parsing TOML config: {0}")]
     Parse(#[from] toml::de::Error),
+    #[error(
+        "config file {0} is empty — refusing to run with all-default settings.\n\
+         Either fill in the file (copy unit3d-installer.example.toml), or omit\n\
+         `--config` entirely to answer the questions interactively."
+    )]
+    Empty(PathBuf),
 }
 
 impl Config {
@@ -337,13 +343,16 @@ impl Config {
     /// fields transparently fall back to the baked-in defaults via
     /// `#[serde(default)]`.
     pub fn load(maybe_path: Option<&Path>) -> Result<Self, ConfigError> {
-        let mut text = String::new();
         if let Some(path) = maybe_path {
-            text = std::fs::read_to_string(path)
+            let text = std::fs::read_to_string(path)
                 .map_err(|e| ConfigError::Read(path.to_path_buf(), e))?;
+            if is_effectively_empty(&text) {
+                return Err(ConfigError::Empty(path.to_path_buf()));
+            }
+            let cfg: Config = toml::from_str(&text)?;
+            return Ok(cfg);
         }
-        let cfg: Config = toml::from_str(&text)?;
-        Ok(cfg)
+        Ok(Config::default())
     }
 
     /// Resolve the install dir, falling back to the OS section default.
@@ -353,5 +362,71 @@ impl Config {
 
     pub fn web_user(&self) -> &str {
         &self.os.ubuntu.web_user
+    }
+}
+
+/// True when a config file contains only comments and whitespace — i.e. no
+/// actual TOML keys. Used to refuse running with silently all-default values.
+fn is_effectively_empty(text: &str) -> bool {
+    text.lines()
+        .map(str::trim)
+        .all(|line| line.is_empty() || line.starts_with('#'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_text_is_effectively_empty() {
+        assert!(is_effectively_empty(""));
+        assert!(is_effectively_empty("   \n\n\t\n"));
+        assert!(is_effectively_empty("# just a comment\n\n  # another\n"));
+    }
+
+    #[test]
+    fn any_key_means_not_empty() {
+        assert!(!is_effectively_empty("ssl = true"));
+        assert!(!is_effectively_empty(
+            "[app]\nhostname = \"tracker.example.com\""
+        ));
+        assert!(!is_effectively_empty("# comment first\n[app]\n"));
+    }
+
+    #[test]
+    fn load_without_config_returns_defaults() {
+        let cfg = Config::load(None).unwrap();
+        assert_eq!(cfg.app.db_driver, DbDriver::MariaDb);
+        assert_eq!(cfg.unit3d.min_php_version, "8.5");
+    }
+
+    #[test]
+    fn load_empty_config_refuses() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "# nothing configured\n\n").unwrap();
+        let err = Config::load(Some(tmp.path())).unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn load_blank_config_refuses() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "\n\n   \n").unwrap();
+        assert!(Config::load(Some(tmp.path())).is_err());
+    }
+
+    #[test]
+    fn load_real_config_overlays_defaults() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "[app]\nhostname = \"tracker.example.com\"\nssl = false\n",
+        )
+        .unwrap();
+        let cfg = Config::load(Some(tmp.path())).unwrap();
+        assert_eq!(cfg.app.hostname, "tracker.example.com");
+        assert!(!cfg.app.ssl);
+        // Unset fields still fall back to defaults.
+        assert_eq!(cfg.app.db_driver, DbDriver::MariaDb);
     }
 }

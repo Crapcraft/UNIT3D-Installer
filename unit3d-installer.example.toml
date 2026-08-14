@@ -2,6 +2,10 @@
 #
 # Pass to the installer via `--config path/to/unit3d-installer.toml`.
 # Any field omitted here falls back to the baked-in defaults.
+#
+# NOTE: an empty config file (only comments/whitespace) is refused — the
+# installer will not run with silently all-default values. Either fill this
+# file in or run interactively without `--config`.
 
 [unit3d]
 min_php_version = "8.5"

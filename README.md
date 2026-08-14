@@ -100,11 +100,16 @@ sudo ./install.sh
 
 ## Configuration
 
-The installer is driven by an optional [TOML](https://toml.io) file. Every field is optional — anything omitted falls back to a sensible baked-in default. Copy [`unit3d-installer.example.toml`](unit3d-installer.example.toml) and edit it to your needs.
+The installer works in one of two ways:
+
+1. **Interactive (default)** — run without `--config` and answer the prompts. Every setting (server name, domain, owner, database, mail, chat port, API keys) is asked one at a time, with sensible pre-filled defaults.
+2. **Config file** — pass a [TOML](https://toml.io) file with `--config` to pre-fill answers, then skip (or keep) the prompts. Every field is optional; anything omitted falls back to a baked-in default. Copy [`unit3d-installer.example.toml`](unit3d-installer.example.toml) and edit it to your needs.
 
 ```bash
 sudo ./install.sh --config /path/to/unit3d-installer.toml
 ```
+
+> **Note:** if the file you pass via `--config` is **empty** (only comments or whitespace), the installer **refuses to run** rather than silently proceeding with all-default settings. Either fill the file in or drop `--config` and answer the questions interactively.
 
 To preview the exact commands and files the installer will produce **without changing anything**:
 

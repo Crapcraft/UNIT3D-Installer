@@ -84,6 +84,21 @@ fn missing_config_is_an_error() {
 }
 
 #[test]
+fn empty_config_file_is_refused() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), "# nothing here\n\n").unwrap();
+
+    let mut cmd = Command::cargo_bin("unit3d-installer").unwrap();
+    cmd.args(["--non-interactive", "--dry-run", "--config"])
+        .arg(tmp.path())
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("is empty").and(predicate::str::contains("refusing to run")),
+        );
+}
+
+#[test]
 fn help_flag_prints_usage() {
     let mut cmd = Command::cargo_bin("unit3d-installer").unwrap();
     cmd.arg("--help").assert().success().stdout(
