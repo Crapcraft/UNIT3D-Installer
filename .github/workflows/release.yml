@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - master
     tags:
       - 'v*'
   workflow_dispatch:
@@ -69,9 +71,23 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Derive release tag
+        id: tag
+        run: |
+          # On a `v*` tag push the tag already exists — reuse it. On any
+          # other push to master we mint a unique per-commit tag so every
+          # commit produces a downloadable release (`install.sh` fetches
+          # `releases/download/latest/...` which resolves to the newest
+          # non-prerelease release — hence these are NOT marked prerelease).
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=ci-${GITHUB_SHA::10}" >> "$GITHUB_OUTPUT"
+          fi
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |

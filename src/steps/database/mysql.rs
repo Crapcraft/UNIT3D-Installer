@@ -91,9 +91,11 @@ pub fn configure(ctx: &mut Context) -> Result<()> {
     }
 
     // `/root/.my.cnf` lets subsequent `mysql -e ...` calls authenticate
-    // without prompting.
+    // without prompting. The password must match what `mysqladmin` actually
+    // sets below, which is the `shell_quote`-scrubbed value — otherwise auth
+    // fails silently later.
     let tpl = MyCnfTemplate {
-        password: &ctx.config.app.dbrootpass,
+        password: &shell_quote(&ctx.config.app.dbrootpass),
     };
     let rendered = tpl.render()?;
     ctx.write_secret_file(std::path::Path::new("/root/.my.cnf"), &rendered)?;
@@ -113,8 +115,11 @@ pub fn configure(ctx: &mut Context) -> Result<()> {
         ),
     ])?;
 
-    let db = &ctx.config.app.db;
-    let dbuser = &ctx.config.app.dbuser;
+    // db / dbuser are shell-quoted (and validated in the config path) so a
+    // hostile value can never break out of the surrounding `bash -c` string
+    // or the SQL statement.
+    let db = shell_quote(&ctx.config.app.db);
+    let dbuser = shell_quote(&ctx.config.app.dbuser);
     let dbpass = shell_quote(&ctx.config.app.dbpass);
     let root_pass = shell_quote(&ctx.config.app.dbrootpass);
     let bin = flavor.binary();
@@ -292,5 +297,62 @@ mod tests {
         assert!(!is_dir_empty(tmp.path().to_str().unwrap()).unwrap());
         // Nonexistent path is "not empty" from the helper's perspective.
         assert!(!is_dir_empty("/nonexistent-dir-xyz").unwrap());
+    }
+
+    #[test]
+    fn configure_shell_quotes_db_and_user() {
+        use crate::process::Exec;
+        use crate::steps::Context;
+        use std::sync::{Arc, Mutex};
+
+        struct Recording(Arc<Mutex<Vec<String>>>);
+        impl Exec for Recording {
+            fn run(&self, cmd: &str) -> Result<std::process::Output> {
+                self.0.lock().unwrap().push(cmd.to_string());
+                Ok(std::process::Output {
+                    status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                })
+            }
+        }
+        let cmds = Arc::new(Mutex::new(Vec::new()));
+        let mut ctx = Context {
+            config: crate::config::Config::default(),
+            prompter: crate::io::Prompter::new(true),
+            style: crate::io::Style,
+            exec: Arc::new(Recording(cmds.clone())),
+            dry_run: true, // don't touch /root/.my.cnf or /var/lib/mysql
+            non_interactive: true,
+            config_path: None,
+        };
+        ctx.config.app.db_driver = DbDriver::Mysql;
+        ctx.config.app.db = "my_db;DROP TABLE x;--".to_string();
+        ctx.config.app.dbuser = "u'name\"$x".to_string();
+        ctx.config.app.dbpass = "p'w;d".to_string();
+        ctx.config.app.dbrootpass = "r'oot".to_string();
+        configure(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        // The raw hostile chars must never reach the emitted shell strings.
+        let joined = cmds.join("\n");
+        assert!(
+            !joined.contains(";"),
+            "semicolon injection leaked: {joined}"
+        );
+        assert!(
+            !joined.contains("u'name"),
+            "shell injection leaked: {joined}"
+        );
+        assert!(!joined.contains("\"$"), "shell injection leaked: {joined}");
+        // The scrubbed identifier forms must appear.
+        assert!(
+            joined.contains("CREATE DATABASE my_dbDROP TABLE x"),
+            "got: {joined}"
+        );
+        assert!(
+            joined.contains("CREATE USER 'unamex'@'localhost'"),
+            "got: {joined}"
+        );
+        assert!(joined.contains("IDENTIFIED BY 'pwd'"), "got: {joined}");
     }
 }

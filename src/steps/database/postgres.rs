@@ -19,13 +19,14 @@ pub fn configure(ctx: &mut Context) -> Result<()> {
         "systemctl enable postgresql".to_string(),
     ])?;
 
-    let db = &ctx.config.app.db;
-    let dbuser = &ctx.config.app.dbuser;
-    let dbpass = super::mysql::shell_quote(&ctx.config.app.dbpass);
-
     // `CREATE ROLE` and `CREATE DATABASE` via a here-doc piped to psql as the
-    // postgres OS user.
-    let sql = build_sql(db, dbuser, &dbpass);
+    // postgres OS user. All interpolated identifiers/passwords are scrubbed
+    // so a hostile config value can't escape the `echo '...'` shell string.
+    let sql = build_sql(
+        &ctx.config.app.db,
+        &ctx.config.app.dbuser,
+        &ctx.config.app.dbpass,
+    );
 
     ctx.run(&format!(
         "echo '{sql}' | sudo -u postgres psql -v ON_ERROR_STOP=1"
@@ -39,6 +40,9 @@ pub fn configure(ctx: &mut Context) -> Result<()> {
 /// standalone function for direct unit testing of the quoting and
 /// idempotency clauses.
 fn build_sql(db: &str, dbuser: &str, dbpass: &str) -> String {
+    let db = super::mysql::shell_quote(db);
+    let dbuser = super::mysql::shell_quote(dbuser);
+    let dbpass = super::mysql::shell_quote(dbpass);
     format!(
         "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{dbuser}') THEN \
             CREATE ROLE {dbuser} LOGIN PASSWORD '{dbpass}'; \
@@ -81,6 +85,33 @@ mod tests {
     fn sql_uses_gexec_for_conditional_create() {
         let sql = build_sql("unit3d", "unit3d", "secretpass");
         assert!(sql.contains("\\gexec"));
+    }
+
+    #[test]
+    fn sql_scrubs_injection_in_identifiers() {
+        // db/dbuser with quotes, semicolons and shell chars must be scrubbed
+        // so they can never escape the `echo '...'` shell string or break
+        // out of the SQL statement.
+        let sql = build_sql("db;DROP TABLE x", "u'name", "p;ass");
+        // Identifiers must be scrubbed (the `;` and quotes stripped).
+        assert!(sql.contains("CREATE ROLE uname"), "got: {sql}");
+        assert!(sql.contains("CREATE DATABASE dbDROP TABLE x"), "got: {sql}");
+        assert!(sql.contains("PASSWORD 'pass'"), "got: {sql}");
+        // No user-controlled value may contain a quote that could break the
+        // surrounding `echo '...'` shell string. The SQL's own structural
+        // quotes (rolname='uname', \gexec trick) are fine and expected.
+        for bad in ["u'name", "p;ass", "db;DROP"] {
+            assert!(!sql.contains(bad), "{bad} leaked into SQL: {sql}");
+        }
+        // The full command is `echo '{sql}' | sudo -u postgres psql ...`;
+        // every single-quote in the SQL must be a balanced structural pair,
+        // never an unbalanced breaker. Count: the echo wrapper adds 2.
+        let echo = format!("echo '{sql}'");
+        assert_eq!(
+            echo.matches('\'').count() % 2,
+            0,
+            "unbalanced quotes: {echo}"
+        );
     }
 
     #[test]

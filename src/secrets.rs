@@ -39,6 +39,19 @@ pub fn redact(cmd: &str) -> String {
     out
 }
 
+/// True when `out` has a word-boundary character before `start` — i.e. the
+/// phrase is a standalone word and not the tail of a longer identifier like
+/// `passwordless` or `my_password_field`.
+fn has_word_boundary_before(out: &str, start: usize) -> bool {
+    if start == 0 {
+        return true;
+    }
+    let Some(prev) = out[..start].chars().next_back() else {
+        return true;
+    };
+    !(prev.is_ascii_alphanumeric() || prev == '_')
+}
+
 /// Scrub `<phrase> <value>` or `<phrase>='<value>'` occurrences where the
 /// value is a standalone word after the phrase. Stops at whitespace, quotes,
 /// `;`, backticks, or `)`. Uses an advancing cursor so each phrase match is
@@ -48,10 +61,24 @@ fn scrub_phrase(s: &str, phrase: &str) -> String {
     let mut cursor = 0;
     while let Some(rel) = out.get(cursor..).and_then(|rest| rest.find(phrase)) {
         let start = cursor + rel;
+        if !has_word_boundary_before(&out, start) {
+            cursor = start + phrase.len();
+            continue;
+        }
         let after = start + phrase.len();
         let Some(rest) = out.get(after..) else {
             break;
         };
+        // A trailing alphanumeric/_ means the phrase is a word prefix (e.g.
+        // "passwordless"); don't scrub it.
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            cursor = after;
+            continue;
+        }
         // Skip an optional '='.
         let after_eq = if rest.starts_with('=') {
             after + 1
@@ -114,6 +141,10 @@ fn scrub_assignment(s: &str, key: &str) -> String {
     let mut cursor = 0;
     while let Some(rel) = out.get(cursor..).and_then(|rest| rest.find(key)) {
         let start = cursor + rel;
+        if !has_word_boundary_before(&out, start) {
+            cursor = start + key.len();
+            continue;
+        }
         let after = start + key.len();
         let Some(rest) = out.get(after..) else {
             break;
@@ -260,5 +291,102 @@ mod tests {
         let out = redact("password a password b password c");
         assert!(!out.contains("a password b"), "got: {out}");
         assert_eq!(out.matches("<redacted>").count(), 3, "got: {out}");
+    }
+
+    #[test]
+    fn double_dash_password_style() {
+        // `--password=secret` should be redacted.
+        let out = redact("mysql --password=hunter2");
+        assert!(!out.contains("hunter2"), "got: {out}");
+        assert!(out.contains("<redacted>"), "got: {out}");
+    }
+
+    #[test]
+    fn dash_p_short_style_is_not_mangled() {
+        // We don't try to parse `-pSECRET` (ambiguous with flags); just make
+        // sure we don't corrupt other tokens.
+        let out = redact("echo -p hello");
+        assert!(out.contains("-p hello"), "got: {out}");
+    }
+
+    #[test]
+    fn no_false_positive_on_passwordless() {
+        let out = redact("echo passwordless auth");
+        assert_eq!(out, "echo passwordless auth", "got: {out}");
+    }
+
+    #[test]
+    fn no_false_positive_on_underscore_field() {
+        let out = redact("check my_password_field here");
+        assert_eq!(out, "check my_password_field here", "got: {out}");
+    }
+
+    #[test]
+    fn value_with_spaces_in_assignment() {
+        // Quoted values keep their spaces inside the redaction span.
+        let out = redact("MAIL_PASSWORD='hush hush' rest");
+        assert!(!out.contains("hush"), "got: {out}");
+        assert!(out.contains("rest"), "got: {out}");
+    }
+
+    #[test]
+    fn value_with_equals_inside_quotes() {
+        let out = redact("DB_PASSWORD='a=b' tail");
+        assert!(!out.contains("a=b"), "got: {out}");
+        assert!(out.contains("tail"), "got: {out}");
+    }
+
+    #[test]
+    fn phrase_at_end_of_string() {
+        let out = redact("mysqladmin -u root password");
+        // No value follows; the phrase stays intact (nothing to leak).
+        assert_eq!(out, "mysqladmin -u root password");
+    }
+
+    #[test]
+    fn phrase_with_empty_equals_value() {
+        let out = redact("password=");
+        assert_eq!(out, "password=", "got: {out}");
+        // A value that follows an '=' is still a credential and is scrubbed.
+        let out2 = redact("password= rest");
+        assert!(!out2.contains("rest"), "got: {out2}");
+    }
+
+    #[test]
+    fn utf8_values_survive() {
+        // Multi-byte values are scrubbed wholesale (not partially).
+        let out = redact("password 'pa🚀ss'");
+        assert!(!out.contains("🚀"), "got: {out}");
+        assert!(!out.contains("'pa"), "got: {out}");
+        assert!(out.contains("<redacted>"), "got: {out}");
+    }
+
+    #[test]
+    fn meilisearch_key_redacted() {
+        let out = redact("MEILISEARCH_MASTER_KEY=0870969f41be10b8e252da7da13330b0");
+        assert!(!out.contains("0870969f"), "got: {out}");
+        assert!(out.contains("<redacted>"), "got: {out}");
+    }
+
+    #[test]
+    fn app_key_redacted() {
+        let out = redact("APP_KEY=base64:Q3VtUmFuZG9tTWVyZQ==");
+        assert!(!out.contains("Q3Vt"), "got: {out}");
+        assert!(out.contains("<redacted>"), "got: {out}");
+    }
+
+    #[test]
+    fn consecutive_key_value_pairs_both_redacted() {
+        let out = redact("DB_PASSWORD=first MAIL_PASSWORD=second");
+        assert!(!out.contains("first"), "got: {out}");
+        assert!(!out.contains("second"), "got: {out}");
+        assert_eq!(out.matches("<redacted>").count(), 2, "got: {out}");
+    }
+
+    #[test]
+    fn password_value_right_after_phrase_no_space() {
+        let out = redact("mysqladmin -u root password'jump'");
+        assert!(!out.contains("jump"), "got: {out}");
+        assert!(out.contains("<redacted>"), "got: {out}");
     }
 }

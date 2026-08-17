@@ -78,6 +78,12 @@ fn from_os_release() -> Result<Option<DistInfo>, DetectError> {
 fn from_issue() -> Option<DistInfo> {
     let text = std::fs::read_to_string("/etc/issue").ok()?;
     let first = text.lines().next()?;
+    parse_issue_line(first)
+}
+
+/// Parse the first non-empty line of `/etc/issue`, e.g.
+/// `Ubuntu 24.04.1 LTS \n \l`.
+fn parse_issue_line(first: &str) -> Option<DistInfo> {
     let mut tokens = first.split_whitespace();
     let name = tokens.next()?;
     let version = tokens.next()?;
@@ -171,6 +177,39 @@ mod tests {
         assert_eq!(info.id, "ubuntu");
         assert_eq!(info.version_id, "24.04");
         assert_eq!(info.distro, Distro::Ubuntu);
+    }
+
+    #[test]
+    fn issue_line_parses_ubuntu() {
+        let info = parse_issue_line("Ubuntu 24.04.1 LTS \\n \\l").unwrap();
+        assert_eq!(info.distro, Distro::Ubuntu);
+        assert_eq!(info.version_id, "24.04.1");
+        assert_eq!(info.id, "ubuntu");
+    }
+
+    #[test]
+    fn issue_line_parses_case_insensitive() {
+        let info = parse_issue_line("UBUNTU 26.04 LTS").unwrap();
+        assert_eq!(info.distro, Distro::Ubuntu);
+        assert_eq!(info.version_id, "26.04");
+    }
+
+    #[test]
+    fn issue_line_non_ubuntu() {
+        let info = parse_issue_line("Debian GNU/Linux 12 \\n \\l").unwrap();
+        assert_eq!(info.distro, Distro::Unsupported);
+        assert_eq!(info.id, "debian");
+    }
+
+    #[test]
+    fn issue_line_blank_returns_none() {
+        assert!(parse_issue_line("").is_none());
+        assert!(parse_issue_line("   \n  ").is_none());
+    }
+
+    #[test]
+    fn issue_line_single_token_returns_none() {
+        assert!(parse_issue_line("Ubuntu").is_none());
     }
 
     fn parse_for_test(text: String) -> DistInfo {

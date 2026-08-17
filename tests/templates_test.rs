@@ -193,3 +193,150 @@ fn credentials_snapshot_http_variant() {
         web_user: "ubuntu",
     }));
 }
+
+#[test]
+fn echo_server_json_is_valid_json() {
+    // Laravel Echo Server reads this file as strict JSON — it must parse.
+    let out = render(&EchoServerTemplate {
+        protocol: "https",
+        fqdn: "tracker.example.com",
+        port: 8443,
+        ssl_cert: "/etc/letsencrypt/live/tracker.example.com/fullchain.pem",
+        ssl_key: "/etc/letsencrypt/live/tracker.example.com/privkey.pem",
+        ssl_chain: "/etc/letsencrypt/live/tracker.example.com/chain.pem",
+    });
+    let v: serde_json::Value = serde_json::from_str(&out)
+        .unwrap_or_else(|e| panic!("echo-server JSON invalid: {e}\n{out}"));
+    assert_eq!(v["port"], 8443);
+    assert_eq!(v["authHost"], "https://tracker.example.com");
+}
+
+#[test]
+fn echo_server_http_variant_is_valid_json() {
+    let out = render(&EchoServerTemplate {
+        protocol: "http",
+        fqdn: "tracker.example.com",
+        port: 6001,
+        ssl_cert: "",
+        ssl_key: "",
+        ssl_chain: "",
+    });
+    let v: serde_json::Value = serde_json::from_str(&out)
+        .unwrap_or_else(|e| panic!("echo-server JSON invalid: {e}\n{out}"));
+    assert_eq!(v["port"], 6001);
+}
+
+#[test]
+fn meilisearch_toml_is_valid_toml() {
+    // Meilisearch fails to start on a malformed config — the rendered TOML
+    // must round-trip through a parser.
+    let out = render(&MeilisearchTomlTemplate {
+        master_key: "masterkey",
+        db_path: "/var/lib/meilisearch/data.ms",
+        dump_dir: "/var/lib/meilisearch/dumps",
+        snapshot_dir: "/var/lib/meilisearch/snapshots",
+    });
+    let v: toml::Value =
+        toml::from_str(&out).unwrap_or_else(|e| panic!("meilisearch TOML invalid: {e}\n{out}"));
+    assert_eq!(v["env"], toml::Value::String("production".into()));
+    assert!(v["master_key"].as_str().is_some());
+}
+
+#[test]
+fn my_cnf_is_valid_ini_style() {
+    // `[client]` header plus a password= line — a comment-safe shape.
+    let out = render(&MyCnfTemplate {
+        password: "rootsecret",
+    });
+    assert!(out.starts_with("[client]"), "got: {out}");
+    assert!(out.contains("password=rootsecret"), "got: {out}");
+    // Empty password must still produce a valid file (no trailing garbage).
+    let empty = render(&MyCnfTemplate { password: "" });
+    assert!(empty.contains("password="), "got: {empty}");
+}
+
+#[test]
+fn env_file_has_no_broken_lines() {
+    // Every non-empty line must be `KEY=value` shaped — a stray newline in a
+    // value would silently corrupt the .env Laravel parses.
+    let out = render(&EnvTemplate {
+        protocol: "https",
+        fqdn: "tracker.example.com",
+        db_driver: "mariadb",
+        db: "unit3d",
+        dbuser: "unit3d",
+        dbpass: "secret",
+        socket: "/var/run/redis/redis.sock",
+        owner: "admin",
+        owner_email: "admin@tracker.example.com",
+        owner_password: "ownerpass",
+        tmdb_key: "tmdbkey",
+        mail_driver: "smtp",
+        mail_host: "smtp.gmail.com",
+        mail_port: "587",
+        mail_username: "user@example.com",
+        mail_password: "mailpass",
+        mail_from_name: "UNIT3D",
+        meilisearch_key: "masterkey",
+        redis_host: "127.0.0.1",
+        redis_port: "6379",
+    });
+    for line in out.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        assert!(
+            line.contains('=') && !line.starts_with('='),
+            "env line is not KEY=value: {line}"
+        );
+        assert_eq!(
+            line.matches('=').count(),
+            1,
+            "env line has extra '=': {line}"
+        );
+    }
+}
+
+#[test]
+fn echo_port_consistency_between_echo_and_env() {
+    // The nginx proxy block and laravel-echo-server.json must agree on the
+    // port; VITE_ECHO_ADDRESS in .env must too.
+    let echo = render(&EchoServerTemplate {
+        protocol: "https",
+        fqdn: "tracker.example.com",
+        port: 8443,
+        ssl_cert: "",
+        ssl_key: "",
+        ssl_chain: "",
+    });
+    let v: serde_json::Value = serde_json::from_str(&echo).unwrap();
+    let port = v["port"].as_u64().unwrap();
+    let env = render(&EnvTemplate {
+        protocol: "https",
+        fqdn: "tracker.example.com",
+        db_driver: "mariadb",
+        db: "unit3d",
+        dbuser: "unit3d",
+        dbpass: "secret",
+        socket: "/var/run/redis/redis.sock",
+        owner: "admin",
+        owner_email: "admin@tracker.example.com",
+        owner_password: "ownerpass",
+        tmdb_key: "tmdbkey",
+        mail_driver: "smtp",
+        mail_host: "smtp.gmail.com",
+        mail_port: "587",
+        mail_username: "user@example.com",
+        mail_password: "mailpass",
+        mail_from_name: "UNIT3D",
+        meilisearch_key: "masterkey",
+        redis_host: "127.0.0.1",
+        redis_port: "6379",
+    });
+    let echo_line = env
+        .lines()
+        .find(|l| l.starts_with("VITE_ECHO_ADDRESS="))
+        .expect("VITE_ECHO_ADDRESS must exist");
+    assert!(echo_line.contains(&format!(":{port}")), "{echo_line}");
+}

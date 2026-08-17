@@ -35,3 +35,80 @@ impl Step for RedisSetupStep {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Args;
+    use crate::process::Exec;
+    use crate::steps::Context;
+    use clap::Parser;
+    use std::sync::{Arc, Mutex};
+
+    fn recording_ctx(web_user: &str) -> (Context, Arc<Mutex<Vec<String>>>) {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.os.ubuntu.web_user = web_user.to_string();
+        let cmds = Arc::new(Mutex::new(Vec::new()));
+        let recording = {
+            let cmds = cmds.clone();
+            struct R(Arc<Mutex<Vec<String>>>);
+            impl Exec for R {
+                fn run(&self, cmd: &str) -> Result<std::process::Output> {
+                    self.0.lock().unwrap().push(cmd.to_string());
+                    Ok(std::process::Output {
+                        status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                    })
+                }
+            }
+            R(cmds)
+        };
+        ctx.exec = Arc::new(recording);
+        (ctx, cmds)
+    }
+
+    #[test]
+    fn redis_emits_socket_and_memory_config() {
+        let (mut ctx, cmds) = recording_ctx("www-data");
+        RedisSetupStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("usermod -aG redis www-data"))
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("unixsocket \\/var\\/run\\/redis\\/redis.sock"))
+        );
+        assert!(cmds.iter().any(|c| c.contains("maxmemory 256mb")));
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("maxmemory-policy allkeys-lru"))
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("systemctl restart redis-server"))
+        );
+    }
+
+    #[test]
+    fn redis_uses_configured_web_user() {
+        let (mut ctx, cmds) = recording_ctx("ubuntu");
+        RedisSetupStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(cmds.iter().any(|c| c.contains("usermod -aG redis ubuntu")));
+    }
+
+    #[test]
+    fn redis_socket_dir_is_owned_by_redis_group() {
+        let (mut ctx, cmds) = recording_ctx("www-data");
+        RedisSetupStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("chown -R redis:www-data /var/run/redis"))
+        );
+    }
+}

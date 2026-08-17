@@ -63,12 +63,13 @@ fn server(ctx: &mut Context) -> Result<()> {
 
     // FQDN validation loop: tolerate a few bad tries, then bail so
     // non-interactive runs don't spin forever on boxes whose `hostname -f`
-    // returns a bare name.
+    // returns a bare name. Uses the same strict check as `Config::validate`
+    // so shell metacharacters never reach the nginx/certbot command line.
     let mut hostname_val = ctx
         .prompter
         .text("Domain (e.g. tracker.example.com)", &hostname_default)?;
     let mut attempts = 0;
-    while !hostname_val.contains('.') && hostname_val != "localhost" {
+    while !crate::config::is_valid_fqdn(&hostname_val) && hostname_val != "localhost" {
         attempts += 1;
         if attempts > 5 {
             anyhow::bail!(
@@ -399,5 +400,39 @@ mod tests {
         assert_eq!(ctx.config.app.dbuser, "unit3d");
         // Auto-generated DB password when left blank.
         assert!(!ctx.config.app.dbpass.is_empty());
+    }
+
+    #[test]
+    fn server_rejects_injection_hostname_in_non_interactive() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.hostname = "tracker.example.com;touch /tmp/pwn".to_string();
+        let err = server(&mut ctx).unwrap_err();
+        // The strict is_valid_fqdn rejects the shell metacharacter.
+        assert!(err.to_string().contains("FQDN"));
+        assert_eq!(
+            ctx.config.app.hostname,
+            "tracker.example.com;touch /tmp/pwn"
+        );
+    }
+
+    #[test]
+    fn chat_accepts_invalid_input_but_keeps_safe_default() {
+        // A non-numeric interactive answer leaves the previous value intact.
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.echo_port = 0;
+        chat(&mut ctx).unwrap();
+        assert_eq!(ctx.config.app.echo_port, 8443);
+    }
+
+    #[test]
+    fn email_fallback_is_safe_for_localhost() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.hostname = "localhost".to_string();
+        ctx.config.app.owner = "UNIT3D".to_string();
+        user(&mut ctx).unwrap();
+        assert_eq!(ctx.config.app.owner_email, "admin@localhost");
     }
 }

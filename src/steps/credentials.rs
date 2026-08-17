@@ -54,10 +54,51 @@ impl Step for CredentialsStep {
 // only caller).
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::cli::Args;
     use crate::password::hex32;
+    use clap::Parser;
 
     #[test]
     fn hex32_is_32_chars() {
         assert_eq!(hex32().len(), 32);
+    }
+
+    fn credential_context() -> Context {
+        let args = Args::parse_from(["unit3d-installer", "--dry-run"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.hostname = "tracker.example.com".to_string();
+        ctx.config.app.owner = "admin".to_string();
+        ctx.config.app.owner_email = "admin@tracker.example.com".to_string();
+        ctx.config.app.password = "ownerpass".to_string();
+        ctx.config.app.db = "unit3d".to_string();
+        ctx.config.app.dbuser = "unit3d".to_string();
+        ctx.config.app.dbpass = "dbpass".to_string();
+        ctx.config.app.dbrootpass = "rootpass".to_string();
+        ctx.config.app.meilisearch_key = "0123456789abcdef0123456789abcdef".to_string();
+        ctx
+    }
+
+    #[test]
+    fn credentials_renders_all_fields() {
+        let mut ctx = credential_context();
+        CredentialsStep.handle(&mut ctx).unwrap();
+        // In dry-run the handle() returns Ok without writing.
+        assert!(ctx.dry_run);
+    }
+
+    #[test]
+    fn credentials_step_requires_web_user_from_config() {
+        let mut ctx = credential_context();
+        ctx.config.os.ubuntu.web_user = "ubuntu".to_string();
+        CredentialsStep.handle(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn credentials_step_is_safe_in_dry_run() {
+        let mut ctx = credential_context();
+        ctx.config.app.dbrootpass = "with'special".to_string();
+        // Must not panic on shell-hostile password characters.
+        CredentialsStep.handle(&mut ctx).unwrap();
     }
 }

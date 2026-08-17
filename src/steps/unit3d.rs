@@ -40,6 +40,13 @@ fn clone(ctx: &mut Context) -> Result<()> {
     // G14: pin to a tag; fall back to `main` if the tag doesn't exist.
     let tag = ctx.config.unit3d.tag.clone();
 
+    // Defense-in-depth: re-validate before anything destructive, in case this
+    // context was constructed without going through `Config::load` (interactive
+    // mode). Charset checks prevent shell break-out via install_dir/tag/url.
+    if let Err(e) = ctx.config.validate() {
+        anyhow::bail!("invalid configuration: {e}");
+    }
+
     if install_dir.exists() {
         if let Some(reason) = unsafe_to_delete(&install_dir) {
             anyhow::bail!(
@@ -163,6 +170,10 @@ fn perms(ctx: &mut Context) -> Result<()> {
         .unwrap_or(Path::new("/"))
         .display()
         .to_string();
+    // Ordering matters: the broad recursive chmods must run BEFORE the
+    // restrictive ones, otherwise `chmod -R 755` would reset `.env` (and the
+    // rest) to world-readable and defeat the 0600 written by
+    // `write_secret_file`.
     ctx.run_all([
         format!("chown -R {web_user}:{web_user} /etc/letsencrypt 2>/dev/null || true"),
         format!("chown -R {web_user}:{web_user} {parent}"),
@@ -170,11 +181,12 @@ fn perms(ctx: &mut Context) -> Result<()> {
             "find {} -type d -exec chmod 0775 {{}} + -or -type f -exec chmod 0664 {{}} +",
             install_dir.display()
         ),
-        format!("chmod 750 {}/artisan", install_dir.display()),
-        format!("chmod 640 {}/.env", install_dir.display()),
         format!("chmod -R 755 {0}", install_dir.display()),
         format!("chmod -R 775 {0}/storage", install_dir.display()),
         format!("chmod -R 775 {0}/bootstrap/cache", install_dir.display()),
+        // Restrictive modes applied last, so nothing clobbers them.
+        format!("chmod 750 {}/artisan", install_dir.display()),
+        format!("chmod 640 {}/.env", install_dir.display()),
     ])?;
     Ok(())
 }

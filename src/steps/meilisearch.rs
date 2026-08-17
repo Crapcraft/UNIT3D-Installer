@@ -75,3 +75,84 @@ impl Step for MeilisearchSetupStep {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Args;
+    use crate::process::Exec;
+    use crate::steps::Context;
+    use clap::Parser;
+    use std::sync::{Arc, Mutex};
+
+    fn meili_context() -> (Context, Arc<Mutex<Vec<String>>>) {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.dry_run = true; // never write to real /etc config paths in tests
+        ctx.config.app.hostname = "tracker.example.com".to_string();
+        ctx.config.app.meilisearch_key = "0123456789abcdef0123456789abcdef".to_string();
+        let cmds = Arc::new(Mutex::new(Vec::new()));
+        let rec = {
+            let cmds = cmds.clone();
+            struct R(Arc<Mutex<Vec<String>>>);
+            impl Exec for R {
+                fn run(&self, cmd: &str) -> Result<std::process::Output> {
+                    self.0.lock().unwrap().push(cmd.to_string());
+                    Ok(std::process::Output {
+                        status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                    })
+                }
+            }
+            R(cmds)
+        };
+        ctx.exec = Arc::new(rec);
+        (ctx, cmds)
+    }
+
+    #[test]
+    fn meili_emits_install_and_service_commands() {
+        let (mut ctx, cmds) = meili_context();
+        MeilisearchSetupStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(cmds.iter().any(|c| c.contains("install.meilisearch.com")));
+        assert!(cmds.iter().any(|c| c.contains("systemctl daemon-reload")));
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("systemctl enable meilisearch"))
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("systemctl start meilisearch"))
+        );
+        assert!(cmds.iter().any(|c| c.contains("scout:import")));
+    }
+
+    #[test]
+    fn meili_writes_config_files() {
+        // In dry-run mode, write_file prints rather than writing; here we
+        // assert the step completes and commands are still emitted.
+        let (mut ctx, cmds) = meili_context();
+        ctx.config.app.meilisearch_key = "0123456789abcdef0123456789abcdef".to_string();
+        MeilisearchSetupStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("chown -R www-data:www-data /var/lib/meilisearch"))
+        );
+    }
+
+    #[test]
+    fn meili_scout_import_uses_install_dir() {
+        let (mut ctx, cmds) = meili_context();
+        ctx.config.os.ubuntu.install_dir = std::path::PathBuf::from("/srv/unit3d");
+        MeilisearchSetupStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("cd /srv/unit3d && php artisan scout:import")),
+            "scout import must run in install dir"
+        );
+    }
+}

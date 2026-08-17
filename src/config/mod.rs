@@ -360,7 +360,9 @@ impl Config {
 
     /// Structural validation that catches obviously-broken configuration
     /// before any destructive step runs. FQDN and port checks apply to both
-    /// config-file and interactive paths.
+    /// config-file and interactive paths. Every string that later reaches a
+    /// shell command line is constrained to a safe character set here, which
+    /// is what makes the command-injection class of bugs unreachable.
     pub fn validate(&self) -> Result<(), ConfigError> {
         // hostname must look like a FQDN unless explicitly "localhost".
         if !self.app.hostname.is_empty()
@@ -377,6 +379,68 @@ impl Config {
                 "app.echo_port must be a non-zero TCP port (1-65535)".to_string(),
             ));
         }
+        // Database name / user flow into `mysql -e` and `psql` strings.
+        if !is_safe_token(&self.app.db) {
+            return Err(ConfigError::Invalid(format!(
+                "app.db '{}' must be an identifier using only [A-Za-z0-9_.-]",
+                self.app.db
+            )));
+        }
+        if !is_safe_token(&self.app.dbuser) {
+            return Err(ConfigError::Invalid(format!(
+                "app.dbuser '{}' must be an identifier using only [A-Za-z0-9_.-]",
+                self.app.dbuser
+            )));
+        }
+        // web_user flows into `sudo -u` and chown.
+        if !is_safe_user(self.web_user()) {
+            return Err(ConfigError::Invalid(format!(
+                "os.ubuntu.web_user '{}' must be a username using only [A-Za-z0-9_-]",
+                self.web_user()
+            )));
+        }
+        // install_dir flows into `rm -rf`, `cd`, chmod/chown, cron and sed.
+        if !is_safe_install_dir(self.install_dir()) {
+            return Err(ConfigError::Invalid(format!(
+                "os.ubuntu.install_dir '{}' must be an absolute path with no '..', \
+                 quotes, spaces, or shell metacharacters",
+                self.install_dir().display()
+            )));
+        }
+        // Owner email reaches the certbot command line.
+        if !self.app.owner_email.is_empty() && !is_valid_email(&self.app.owner_email) {
+            return Err(ConfigError::Invalid(format!(
+                "app.owner_email '{}' is not a valid email address",
+                self.app.owner_email
+            )));
+        }
+        // Git tag/branch and repository reach `git clone -b {tag} {url}`.
+        if !is_safe_ref(&self.unit3d.tag) {
+            return Err(ConfigError::Invalid(format!(
+                "unit3d.tag '{}' contains characters not allowed in a git ref",
+                self.unit3d.tag
+            )));
+        }
+        if !is_safe_repository(&self.unit3d.repository) {
+            return Err(ConfigError::Invalid(
+                "unit3d.repository must be an https:// or git@ URL".to_string(),
+            ));
+        }
+        // mail_port is written into .env; a numeric range keeps it a value.
+        if !self.app.mail_port.is_empty() {
+            let port_ok = self
+                .app
+                .mail_port
+                .parse::<u16>()
+                .map(|p| p != 0)
+                .unwrap_or(false);
+            if !port_ok {
+                return Err(ConfigError::Invalid(format!(
+                    "app.mail_port '{}' must be a numeric TCP port (1-65535)",
+                    self.app.mail_port
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -390,14 +454,120 @@ impl Config {
     }
 }
 
-/// Conservative FQDN check: at least two dot-separated labels, no
-/// spaces/slashes/control chars, all lowercase-safe. Allows a trailing dot.
-fn is_valid_fqdn(s: &str) -> bool {
+/// Conservative FQDN check: at least two dot-separated labels of only
+/// `[A-Za-z0-9-]` characters, no shell metacharacters, no control chars.
+/// Allows a trailing dot.
+pub(crate) fn is_valid_fqdn(s: &str) -> bool {
     let s = s.trim_end_matches('.');
     if s.is_empty() || s.len() > 253 || s.contains(' ') || s.contains('/') {
         return false;
     }
-    s.split('.').count() >= 2 && s.split('.').all(|label| !label.is_empty())
+    if s.chars()
+        .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '.'))
+    {
+        return false;
+    }
+    if s.split('.').count() < 2 {
+        return false;
+    }
+    s.split('.').all(is_valid_dns_label)
+}
+
+/// A single DNS label: 1-63 chars, alphanumeric, optional interior dashes,
+/// never a bare dash or a dash at either end.
+fn is_valid_dns_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= 63
+        && !label.starts_with('-')
+        && !label.ends_with('-')
+        && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// A DNS label / shell-safe token: only `[A-Za-z0-9_.-]`.
+fn is_safe_token(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
+/// A Unix username / group: `[A-Za-z0-9_-]`, no leading dash.
+fn is_safe_user(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 32
+        && !s.starts_with('-')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+}
+
+/// A git tag / branch: `[A-Za-z0-9._/-]`, no spaces or shell metacharacters.
+fn is_safe_ref(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 256
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | '/'))
+}
+
+/// An install dir must be an absolute path with no `..` segments and no
+/// characters that would break out of a shell string or confuse tooling.
+fn is_safe_install_dir(p: &Path) -> bool {
+    let s = p.to_string_lossy();
+    if !s.starts_with('/') {
+        return false;
+    }
+    if s.contains('\'')
+        || s.contains('"')
+        || s.contains('\\')
+        || s.contains('$')
+        || s.contains(';')
+        || s.contains('`')
+        || s.contains(' ')
+        || s.contains('\n')
+    {
+        return false;
+    }
+    p.components().all(|c| c != std::path::Component::ParentDir)
+}
+
+/// A basic RFC-ish email shape: exactly one `@`, a dot in the domain, and
+/// no whitespace/shell metacharacters. Used before the address reaches the
+/// certbot command line.
+fn is_valid_email(s: &str) -> bool {
+    if s.is_empty()
+        || s.len() > 254
+        || s.contains(' ')
+        || s.contains(';')
+        || s.contains('\'')
+        || s.contains('"')
+        || s.contains('`')
+        || s.contains('$')
+        || s.contains('\n')
+    {
+        return false;
+    }
+    match s.rsplit_once('@') {
+        Some((local, domain)) => {
+            !local.is_empty()
+                && !domain.is_empty()
+                && domain.contains('.')
+                && domain
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        }
+        None => false,
+    }
+}
+
+/// A git repository URL: https(s) git URLs only, no shell metacharacters.
+fn is_safe_repository(s: &str) -> bool {
+    (s.starts_with("https://") || s.starts_with("git@"))
+        && s.len() <= 512
+        && !s.chars().any(|c| {
+            matches!(
+                c,
+                '\'' | '"' | '`' | '$' | ';' | '\\' | '\n' | ' ' | '(' | ')'
+            )
+        })
 }
 
 /// True when a config file contains only comments and whitespace — i.e. no
@@ -714,5 +884,191 @@ web_user = "ubuntu"
         std::fs::write(tmp.path(), "[app]\nhostname = \"badhostname\"\n").unwrap();
         let err = Config::load(Some(tmp.path())).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid(_)));
+    }
+
+    #[test]
+    fn fqdn_rejects_shell_metacharacters() {
+        // These pass the old space/slash-only check but must never reach a
+        // shell command line (nginx certbot, nginx site, php pool filename).
+        for bad in [
+            "tracker.example.com;touch /tmp/pwn",
+            "tracker.example.com$(id)",
+            "tracker.example.com`id`",
+            "tracker.example.com'",
+            "tracker.example.com\"",
+            "tracker\n.example.com",
+            "tracker.example.com\t",
+            "tracker..example.com",
+            "-.example.com",
+        ] {
+            assert!(!is_valid_fqdn(bad), "{bad} must be rejected");
+        }
+    }
+
+    #[test]
+    fn fqdn_accepts_legit_domains() {
+        for ok in [
+            "tracker.example.com",
+            "www.example.co.uk",
+            "a.b",
+            "my-tracker.example.com",
+            "sub1.sub2.example.net.",
+            "localhost.localdomain",
+        ] {
+            assert!(is_valid_fqdn(ok), "{ok} must be accepted");
+        }
+    }
+
+    #[test]
+    fn safe_token_accepts_rejects() {
+        assert!(is_safe_token("unit3d"));
+        assert!(is_safe_token("my_db"));
+        assert!(is_safe_token("db-2"));
+        assert!(!is_safe_token(""));
+        assert!(!is_safe_token("unit3d;drop"));
+        assert!(!is_safe_token("unit3d'"));
+        assert!(!is_safe_token("has space"));
+        assert!(!is_safe_token("x".repeat(65).as_str()));
+    }
+
+    #[test]
+    fn safe_user_accepts_rejects() {
+        assert!(is_safe_user("www-data"));
+        assert!(is_safe_user("ubuntu"));
+        assert!(is_safe_user("unit3d"));
+        assert!(!is_safe_user(""));
+        assert!(!is_safe_user("-root"));
+        assert!(!is_safe_user("user;x"));
+        assert!(!is_safe_user("has space"));
+        assert!(!is_safe_user("user'"));
+    }
+
+    #[test]
+    fn safe_ref_accepts_rejects() {
+        assert!(is_safe_ref("v9.2.0"));
+        assert!(is_safe_ref("master"));
+        assert!(is_safe_ref("release/v9.1.0"));
+        assert!(!is_safe_ref(""));
+        assert!(!is_safe_ref("v9.2.0;x"));
+        assert!(!is_safe_ref("v9.2.0 `rm`"));
+        assert!(!is_safe_ref("has space"));
+    }
+
+    #[test]
+    fn safe_install_dir_accepts_rejects() {
+        assert!(is_safe_install_dir(Path::new("/var/www/html")));
+        assert!(is_safe_install_dir(Path::new("/srv/unit3d")));
+        assert!(!is_safe_install_dir(Path::new("/var/www/../etc")));
+        assert!(!is_safe_install_dir(Path::new("/var/www/..")));
+        assert!(!is_safe_install_dir(Path::new("relative/path")));
+        assert!(!is_safe_install_dir(Path::new("/etc;rm -rf /")));
+        assert!(!is_safe_install_dir(Path::new("/var/www 'x'")));
+        assert!(!is_safe_install_dir(Path::new("/var/www$(id)")));
+        assert!(!is_safe_install_dir(Path::new("/var/www `id`")));
+        assert!(!is_safe_install_dir(Path::new("/var/www/with space")));
+    }
+
+    #[test]
+    fn valid_email_checks() {
+        assert!(is_valid_email("admin@example.com"));
+        assert!(is_valid_email("a.b+c@sub.example.co.uk"));
+        assert!(!is_valid_email(""));
+        assert!(!is_valid_email("no-at-sign"));
+        assert!(!is_valid_email("user@nodot"));
+        assert!(!is_valid_email("admin@example.com;rm -rf /"));
+        assert!(!is_valid_email("admin@example.com'"));
+        assert!(!is_valid_email("ad min@example.com"));
+        assert!(!is_valid_email("@example.com"));
+    }
+
+    #[test]
+    fn safe_repository_checks() {
+        assert!(is_safe_repository(
+            "https://github.com/HDInnovations/UNIT3D-Community-Edition.git"
+        ));
+        assert!(is_safe_repository("git@github.com:user/repo.git"));
+        assert!(!is_safe_repository(""));
+        assert!(!is_safe_repository("https://github.com/x;touch /tmp/y"));
+        assert!(!is_safe_repository("https://github.com/x `id`"));
+        assert!(!is_safe_repository("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_db_user() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        cfg.app.dbuser = "unit3d;DROP TABLE x;".to_string();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("dbuser"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_db_name() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        cfg.app.db = "unit3d' --".to_string();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("app.db"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_web_user() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        cfg.os.ubuntu.web_user = "www-data;id".to_string();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("web_user"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_install_dir() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        cfg.os.ubuntu.install_dir = PathBuf::from("/var/www/../../etc");
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("install_dir"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_email() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        cfg.app.owner_email = "admin@example.com;touch /tmp/pwn".to_string();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("owner_email"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_tag() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        cfg.unit3d.tag = "v9.2.0 `rm -rf /`".to_string();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("unit3d.tag"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_repository() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        cfg.unit3d.repository = "https://github.com/x;touch /tmp/y".to_string();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("repository"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_mail_port() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        cfg.app.mail_port = "587\nMAIL_PASSWORD=hax".to_string();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("mail_port"));
+    }
+
+    #[test]
+    fn validate_accepts_full_valid_config() {
+        let cfg = Config::default();
+        // Defaults are all safe.
+        assert!(cfg.validate().is_ok());
     }
 }

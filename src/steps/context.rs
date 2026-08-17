@@ -61,6 +61,9 @@ impl Context {
 
     /// Helper: write a file, but in `--dry-run` mode just print the
     /// intended contents to stdout instead of touching the filesystem.
+    /// Written atomically (temp + rename) and refusing to follow symlinks,
+    /// so a pre-planted symlink at a system path can't be turned into a
+    /// root write primitive.
     pub fn write_file(&self, path: &std::path::Path, contents: &str) -> Result<()> {
         if self.dry_run {
             println!("# >>> write {}", path.display());
@@ -71,8 +74,7 @@ impl Context {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, contents)?;
-        Ok(())
+        write_atomic(path, contents)
     }
 
     /// Write a file containing secrets (`.env`, `/root/.my.cnf`,
@@ -88,27 +90,66 @@ impl Context {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let tmp = temp_file_for(path);
-        std::fs::write(&tmp, contents)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-        }
-        std::fs::rename(&tmp, path)?;
-        Ok(())
+        write_atomic_0600(path, contents)
     }
 }
 
-/// Derive a unique sibling temp path for atomic writes.
+/// Write a temp file with the given mode from the start (never a
+/// world-readable window), refusing to follow a pre-existing symlink, then
+/// atomically rename it over `path`.
+#[cfg(unix)]
+fn write_atomic_with_mode(path: &std::path::Path, contents: &str, mode: u32) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let tmp = temp_file_for(path);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(&tmp)?;
+    f.write_all(contents.as_bytes())?;
+    f.flush()?;
+    // fsync the data so a crash right after rename can't leave an empty
+    // file where the real one used to be.
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_atomic_with_mode(path: &std::path::Path, contents: &str, _mode: u32) -> Result<()> {
+    let tmp = temp_file_for(path);
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Atomic write for ordinary (non-secret) config files: 0644.
+fn write_atomic(path: &std::path::Path, contents: &str) -> Result<()> {
+    write_atomic_with_mode(path, contents, 0o644)
+}
+
+/// Atomic write for secret files: 0600.
+fn write_atomic_0600(path: &std::path::Path, contents: &str) -> Result<()> {
+    write_atomic_with_mode(path, contents, 0o600)
+}
+
+/// Derive a unique sibling temp path for atomic writes. Includes the PID and
+/// a process-wide counter so two concurrent writers (or a leftover temp file
+/// from a crashed run) never collide with `create_new`.
 fn temp_file_for(path: &std::path::Path) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "unit3d-tmp".to_string());
     let dir = path.parent().unwrap_or(std::path::Path::new("/tmp"));
     let pid = std::process::id();
-    dir.join(format!(".{name}.{pid}.tmp"))
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    dir.join(format!(".{name}.{pid}.{n}.tmp"))
 }
 
 /// Catalog of every install step, in execution order. This is the Rust
@@ -284,5 +325,69 @@ mod tests {
         ctx.write_secret_file(&target, "x").unwrap();
         assert!(!target.exists());
         assert!(!tmp.path().join("nested").exists());
+    }
+
+    #[test]
+    fn write_file_does_not_follow_symlink() {
+        #[cfg(unix)]
+        {
+            let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+            let ctx = Context::build(&args).unwrap();
+            let tmp = tempdir().unwrap();
+            let victim = tmp.path().join("victim.txt");
+            std::fs::write(&victim, "do-not-touch").unwrap();
+            let target = tmp.path().join("config.txt");
+            // Attacker plants a symlink at the config path pointing at the
+            // victim.
+            std::os::unix::fs::symlink(&victim, &target).unwrap();
+            // write_file must replace the symlink, not follow it.
+            ctx.write_file(&target, "new").unwrap();
+            assert_eq!(std::fs::read_to_string(&victim).unwrap(), "do-not-touch");
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+            // The target is now a regular file, not a symlink.
+            assert!(!target.is_symlink());
+        }
+    }
+
+    #[test]
+    fn write_secret_file_does_not_follow_symlink() {
+        #[cfg(unix)]
+        {
+            let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+            let ctx = Context::build(&args).unwrap();
+            let tmp = tempdir().unwrap();
+            let victim = tmp.path().join("victim.txt");
+            std::fs::write(&victim, "do-not-touch").unwrap();
+            let target = tmp.path().join("secret.conf");
+            std::os::unix::fs::symlink(&victim, &target).unwrap();
+            ctx.write_secret_file(&target, "s3cret").unwrap();
+            assert_eq!(std::fs::read_to_string(&victim).unwrap(), "do-not-touch");
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "s3cret");
+        }
+    }
+
+    #[test]
+    fn temp_file_names_are_unique_per_call() {
+        let a = temp_file_for(std::path::Path::new("/var/www/html/.env"));
+        let b = temp_file_for(std::path::Path::new("/var/www/html/.env"));
+        assert_ne!(a, b);
+        assert!(a.starts_with("/var/www/html"));
+        // Filename must not collide with the real .env.
+        assert!(!a.ends_with(".env"));
+    }
+
+    #[test]
+    fn write_file_default_perms_0644() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+            let ctx = Context::build(&args).unwrap();
+            let tmp = tempdir().unwrap();
+            let target = tmp.path().join("nginx-site.txt");
+            ctx.write_file(&target, "server { }").unwrap();
+            let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o644);
+        }
     }
 }

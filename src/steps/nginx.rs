@@ -68,3 +68,105 @@ impl Step for NginxSetupStep {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Args;
+    use crate::process::Exec;
+    use crate::steps::Context;
+    use clap::Parser;
+    use std::sync::{Arc, Mutex};
+
+    fn nginx_context() -> (Context, Arc<Mutex<Vec<String>>>) {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.dry_run = true; // never write to real /etc/nginx in tests
+        ctx.config.app.hostname = "tracker.example.com".to_string();
+        ctx.config.app.owner_email = "admin@tracker.example.com".to_string();
+        let cmds = Arc::new(Mutex::new(Vec::new()));
+        let rec = {
+            let cmds = cmds.clone();
+            struct R(Arc<Mutex<Vec<String>>>);
+            impl Exec for R {
+                fn run(&self, cmd: &str) -> Result<std::process::Output> {
+                    self.0.lock().unwrap().push(cmd.to_string());
+                    Ok(std::process::Output {
+                        status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                    })
+                }
+            }
+            R(cmds)
+        };
+        ctx.exec = Arc::new(rec);
+        (ctx, cmds)
+    }
+
+    #[test]
+    fn nginx_emits_site_and_reload_commands() {
+        let (mut ctx, cmds) = nginx_context();
+        NginxSetupStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("ln -sf /etc/nginx/sites-available/default"))
+        );
+        assert!(cmds.iter().any(|c| c.contains("nginx -t")));
+        assert!(cmds.iter().any(|c| c.contains("systemctl restart nginx")));
+        assert!(cmds.iter().any(|c| c.contains("ufw allow 'Nginx Full'")));
+    }
+
+    #[test]
+    fn nginx_opens_configured_echo_port() {
+        let (mut ctx, cmds) = nginx_context();
+        ctx.config.app.echo_port = 6001;
+        NginxSetupStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(cmds.iter().any(|c| c == "ufw allow 6001"));
+    }
+
+    #[test]
+    fn nginx_runs_certbot_when_ssl() {
+        let (mut ctx, cmds) = nginx_context();
+        ctx.config.app.ssl = true;
+        NginxSetupStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(
+            cmds.iter()
+                .any(|c| c.starts_with("certbot --redirect --nginx -n --agree-tos")),
+            "certbot must run when ssl=true"
+        );
+        let certbot = cmds.iter().find(|c| c.starts_with("certbot")).unwrap();
+        assert!(
+            certbot.contains("--email=admin@tracker.example.com"),
+            "{certbot}"
+        );
+        assert!(certbot.contains("-d tracker.example.com"), "{certbot}");
+    }
+
+    #[test]
+    fn nginx_skips_certbot_when_no_ssl() {
+        let (mut ctx, cmds) = nginx_context();
+        ctx.config.app.ssl = false;
+        NginxSetupStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(
+            !cmds.iter().any(|c| c.starts_with("certbot")),
+            "no certbot when ssl=false"
+        );
+    }
+
+    #[test]
+    fn nginx_writes_site_file_via_exec() {
+        // In a non-dry-run context write_file writes to /etc/nginx — not
+        // desirable in tests. Use dry-run to verify the step still emits
+        // commands and the render doesn't panic.
+        let (mut ctx, cmds) = nginx_context();
+        ctx.dry_run = true;
+        NginxSetupStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(cmds.iter().any(|c| c.contains("nginx -t")));
+    }
+}
