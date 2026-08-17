@@ -5,6 +5,42 @@
 use crate::steps::{Context, Step};
 use anyhow::Result;
 
+/// Shell commands that add the PHP apt repository for the detected Ubuntu
+/// release.
+///
+/// The ondrej/php PPA is being merged into packages.sury.org/php. For
+/// Ubuntu 22.04 (Jammy) and 24.04 (Noble) the PPA still publishes packages,
+/// but for 26.04 (Resolute) and newer the canonical source is
+/// `https://packages.sury.org/php/` (adding `ppa:ondrej/php` there yields a
+/// repo with no Release file, which aborts `apt-get update`).
+fn php_repo_commands(ctx: &Context) -> Vec<String> {
+    let version_id = if ctx.dry_run {
+        // Don't read the live box during a dry run; preview the legacy PPA
+        // path so the output is deterministic across machines.
+        String::new()
+    } else {
+        crate::system::detect()
+            .map(|info| info.version_id)
+            .unwrap_or_default()
+    };
+    let major: u32 = version_id
+        .split('.')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if major >= 26 {
+        vec![
+            "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb"
+                .to_string(),
+            "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
+            "sh -c 'echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main\" > /etc/apt/sources.list.d/php.list'"
+                .to_string(),
+        ]
+    } else {
+        vec!["add-apt-repository -y ppa:ondrej/php".to_string()]
+    }
+}
+
 pub struct PrerequisitesStep;
 
 impl Step for PrerequisitesStep {
@@ -27,16 +63,20 @@ impl Step for PrerequisitesStep {
             anyhow::bail!("Aborted ...");
         }
 
-        // Add PHP PPA, Node.js 20, Bun.
-        ctx.run_all([
-            "add-apt-repository -y ppa:ondrej/php".to_string(),
+        // Add the PHP repository, Node.js 24, Bun. The ondrej/php PPA only
+        // publishes packages for Jammy (22.04) and Noble (24.04); for Ubuntu
+        // 26.04 (Resolute) and newer, PHP packages are canonical at
+        // packages.sury.org/php/ (the PPA is being merged into it).
+        let mut cmds = php_repo_commands(ctx);
+        cmds.extend([
             "apt-get -qq update".to_string(),
             "curl -sL https://deb.nodesource.com/setup_24.x | sudo -E bash -".to_string(),
             "curl -fsSL https://bun.sh/install | bash".to_string(),
             "mv /root/.bun/bin/bun /usr/local/bin/ 2>/dev/null || true".to_string(),
             "chmod a+x /usr/local/bin/bun 2>/dev/null || true".to_string(),
             "npm install -g laravel-echo-server".to_string(),
-        ])?;
+        ]);
+        ctx.run_all(cmds)?;
 
         // Install all the listed apt packages.
         let pkgs: Vec<&str> = software.packages.keys().map(String::as_str).collect();
@@ -80,7 +120,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     fn prereq_context() -> (Context, Arc<Mutex<Vec<String>>>) {
-        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive", "--dry-run"]);
         let mut ctx = Context::build(&args).unwrap();
         ctx.config.app.echo_port = 9001;
         let cmds = Arc::new(Mutex::new(Vec::new()));
@@ -157,5 +197,59 @@ mod tests {
             cmds.iter().any(|c| c.starts_with("apt install -y")),
             "must use configured pkg manager"
         );
+    }
+
+    #[test]
+    fn php_repo_legacy_ppa_for_24_and_below() {
+        // Jammy/Noble still get the legacy PPA.
+        assert_eq!(
+            php_repo_commands_for_version("24.04"),
+            vec!["add-apt-repository -y ppa:ondrej/php"]
+        );
+        assert_eq!(
+            php_repo_commands_for_version("22.04.3"),
+            vec!["add-apt-repository -y ppa:ondrej/php"]
+        );
+        // Unknown/empty version falls back to the legacy PPA too.
+        assert_eq!(
+            php_repo_commands_for_version(""),
+            vec!["add-apt-repository -y ppa:ondrej/php"]
+        );
+    }
+
+    #[test]
+    fn php_repo_uses_sury_for_26_and_newer() {
+        let cmds = php_repo_commands_for_version("26.04");
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("packages.sury.org/debsuryorg-archive-keyring.deb"))
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("dpkg -i /tmp/debsuryorg-archive-keyring.deb"))
+        );
+        assert!(cmds.iter().any(|c| c.contains("packages.sury.org/php/")
+            && c.contains("signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg")));
+        // The PPA must never be used on 26.04.
+        assert!(!cmds.iter().any(|c| c.contains("ppa:ondrej/php")));
+    }
+
+    fn php_repo_commands_for_version(version_id: &str) -> Vec<String> {
+        let major: u32 = version_id
+            .split('.')
+            .next()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if major >= 26 {
+            vec![
+                "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb"
+                    .to_string(),
+                "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
+                "sh -c 'echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main\" > /etc/apt/sources.list.d/php.list'"
+                    .to_string(),
+            ]
+        } else {
+            vec!["add-apt-repository -y ppa:ondrej/php".to_string()]
+        }
     }
 }
