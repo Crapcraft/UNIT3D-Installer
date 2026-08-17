@@ -28,9 +28,16 @@ case "$ARCH" in
 esac
 
 # Prefer a specific version if the caller set UNIT3D_INSTALLER_VERSION,
-# otherwise pull the latest release.
+# otherwise pull the latest release. GitHub's "latest" magic only works in
+# the `releases/latest/download/...` form (it redirects to the newest
+# release's asset); `releases/download/latest/...` would treat "latest" as a
+# literal tag name and 404.
 VERSION="${UNIT3D_INSTALLER_VERSION:-latest}"
-URL="https://github.com/${REPO}/releases/download/${VERSION}/unit3d-installer-${ARCH}.tar.gz"
+if [[ "${VERSION}" == "latest" ]]; then
+    URL="https://github.com/${REPO}/releases/latest/download/unit3d-installer-${ARCH}.tar.gz"
+else
+    URL="https://github.com/${REPO}/releases/download/${VERSION}/unit3d-installer-${ARCH}.tar.gz"
+fi
 SUM_URL="${URL}.sha256"
 
 TMP="$(mktemp -d)"
