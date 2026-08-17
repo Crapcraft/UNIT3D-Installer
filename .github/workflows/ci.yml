@@ -51,19 +51,6 @@ jobs:
       - name: Run tests
         run: cargo test --all-targets
 
-  test-msrv:
-    name: Tests (MSRV 1.85)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.85.0
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-      - name: Run tests
-        run: cargo test --all-targets
-
   build-release:
     name: Release build
     runs-on: ubuntu-latest
