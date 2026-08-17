@@ -56,7 +56,7 @@ jobs:
             --non-interactive --dry-run --config unit3d-installer.example.toml </dev/null >/tmp/dryrun.log
           grep -q "UNIT3D Installation Complete!" /tmp/dryrun.log
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.arch }}
           path: dist/
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -85,7 +85,7 @@ jobs:
             echo "tag=ci-${GITHUB_SHA::10}" >> "$GITHUB_OUTPUT"
           fi
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
