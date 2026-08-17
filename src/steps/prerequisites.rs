@@ -82,8 +82,28 @@ impl Step for PrerequisitesStep {
         ]);
         ctx.run_all(cmds)?;
 
-        // Install all the listed apt packages.
-        let pkgs: Vec<&str> = software.packages.keys().map(String::as_str).collect();
+        // Install the listed apt packages, but avoid installing conflicting
+        // database server packages simultaneously. Only install the DB server
+        // selected via `app.db_driver`.
+        let db_pkg = match ctx.config.app.db_driver {
+            crate::config::DbDriver::Mysql => "mysql-server",
+            crate::config::DbDriver::MariaDb => "mariadb-server",
+            crate::config::DbDriver::Postgres => "postgresql",
+        };
+
+        let mut pkgs: Vec<String> = Vec::new();
+        for pkg in software.packages.keys() {
+            // Keep the selected DB package, but skip other DB server packages
+            // to prevent apt conflicts (mysql vs mariadb virtual providers).
+            if pkg == "mysql-server" || pkg == "mariadb-server" || pkg == "postgresql" {
+                if pkg == db_pkg {
+                    pkgs.push(pkg.clone());
+                }
+            } else {
+                pkgs.push(pkg.clone());
+            }
+        }
+
         let install_cmd = format!(
             "{} install -y {}",
             ctx.config.os.ubuntu.pkg_manager,
