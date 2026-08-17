@@ -30,6 +30,10 @@ fn php_repo_commands(ctx: &Context) -> Vec<String> {
         .unwrap_or(0);
     if major >= 26 {
         vec![
+            // Remove any stale `ppa:ondrej/php` source from an earlier
+            // failed run — it points at a non-existent release and aborts
+            // `apt-get update`.
+            "rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources".to_string(),
             "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb"
                 .to_string(),
             "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
@@ -230,6 +234,8 @@ mod tests {
         );
         assert!(cmds.iter().any(|c| c.contains("packages.sury.org/php/")
             && c.contains("signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg")));
+        // Stale ondrej PPA sources from an earlier run must be removed.
+        assert!(cmds.iter().any(|c| c.contains("ondrej-ubuntu-php-*.list")));
         // The PPA must never be used on 26.04.
         assert!(!cmds.iter().any(|c| c.contains("ppa:ondrej/php")));
     }
@@ -242,6 +248,8 @@ mod tests {
             .unwrap_or(0);
         if major >= 26 {
             vec![
+                "rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources"
+                    .to_string(),
                 "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb"
                     .to_string(),
                 "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
