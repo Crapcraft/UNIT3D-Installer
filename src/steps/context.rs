@@ -161,8 +161,8 @@ impl Steps {
         vec![
             Box::new(super::policies::PoliciesStep),
             Box::new(super::server::ServerSetupStep),
-            Box::new(super::redis::RedisSetupStep),
             Box::new(super::prerequisites::PrerequisitesStep),
+            Box::new(super::redis::RedisSetupStep),
             Box::new(super::database::DatabaseStep),
             Box::new(super::php::PhpSetupStep),
             Box::new(super::nginx::NginxSetupStep),

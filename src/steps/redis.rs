@@ -18,7 +18,7 @@ impl Step for RedisSetupStep {
 
         ctx.run_all([
             "mkdir -p /var/run/redis/".to_string(),
-            "chown -R redis:www-data /var/run/redis".to_string(),
+            format!("chown -R redis:{web_user} /var/run/redis"),
             format!("usermod -aG redis {web_user}"),
             "sed -i 's/^# unixsocket /unixsocket /' /etc/redis/redis.conf".to_string(),
             "sed -i 's/^# unixsocketperm /unixsocketperm /' /etc/redis/redis.conf".to_string(),
@@ -102,13 +102,41 @@ mod tests {
     }
 
     #[test]
-    fn redis_socket_dir_is_owned_by_redis_group() {
+    fn redis_socket_dir_is_owned_by_redis_and_web_user_group() {
         let (mut ctx, cmds) = recording_ctx("www-data");
         RedisSetupStep.handle(&mut ctx).unwrap();
         let cmds = cmds.lock().unwrap();
         assert!(
             cmds.iter()
                 .any(|c| c.contains("chown -R redis:www-data /var/run/redis"))
+        );
+        // The group must follow the configured web user, not be hardcoded.
+        let (mut ctx2, cmds2) = recording_ctx("ubuntu");
+        RedisSetupStep.handle(&mut ctx2).unwrap();
+        let cmds2 = cmds2.lock().unwrap();
+        assert!(
+            cmds2
+                .iter()
+                .any(|c| c.contains("chown -R redis:ubuntu /var/run/redis"))
+        );
+    }
+
+    #[test]
+    fn redis_requires_prerequisites_ordering() {
+        // redis-server (and its `redis` user/group) is installed by
+        // PrerequisitesStep; RedisSetupStep must run after it. Assert the
+        // ordered catalog reflects that dependency.
+        use crate::steps::Steps;
+        let ordered = Steps::ordered();
+        let names: Vec<&str> = ordered.iter().map(|s| s.name()).collect();
+        let redis_idx = names
+            .iter()
+            .position(|n| *n == "Redis Setup & Configurations")
+            .unwrap();
+        let prereq_idx = names.iter().position(|n| *n == "Prerequisites").unwrap();
+        assert!(
+            prereq_idx < redis_idx,
+            "redis setup must run after prerequisites (got {prereq_idx} before {redis_idx})"
         );
     }
 }

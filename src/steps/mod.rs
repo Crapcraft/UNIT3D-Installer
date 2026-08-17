@@ -59,8 +59,8 @@ mod tests {
             [
                 "Validating Installer Policies",
                 "Server Setup",
-                "Redis Setup & Configurations",
                 "Prerequisites",
+                "Redis Setup & Configurations",
                 "Configuring & Securing Database",
                 "PHP & PHP-FPM Configuration",
                 "Nginx Setup & Configurations",
