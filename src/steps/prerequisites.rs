@@ -147,8 +147,13 @@ impl Step for PrerequisitesStep {
             ))?;
         }
 
-        // PECL Redis extension for PHP CLI.
-        ctx.run("printf '\\n' | pecl install redis 2>/dev/null")?;
+        // PECL Redis extension for PHP CLI. Ensure `pecl` is available by
+        // installing `php-pear` if necessary, then run the installer.
+        let pecl_cmd = format!(
+            "command -v pecl >/dev/null || {} install -y php-pear; printf '\n' | pecl install redis 2>/dev/null",
+            ctx.config.os.ubuntu.pkg_manager
+        );
+        ctx.run(&pecl_cmd)?;
 
         // UFW: allow Nginx Full + the configured chat echo port (must match
         // the port used by the nginx proxy block and laravel-echo-server).
