@@ -82,15 +82,20 @@ pub fn configure(ctx: &mut Context) -> Result<()> {
     }
 
     // On a fresh Ubuntu data dir is empty — initialize it.
-    if ctx.dry_run || !Path::new("/var/lib/mysql").exists() || is_dir_empty("/var/lib/mysql")? {
-        ctx.run_all([
-            "mkdir -p /var/lib/mysql".to_string(),
-            "chown mysql:mysql /var/lib/mysql".to_string(),
-            format!(
-                "( {bin} --initialize-insecure --user=mysql ) || runuser -u mysql -- {bin} --initialize-insecure",
-                bin = flavor.init_bin()
-            ),
-        ])?;
+        if ctx.dry_run || !Path::new("/var/lib/mysql").exists() || is_dir_empty("/var/lib/mysql")? {
+            ctx.run_all([
+                // stop any running service instances before initialization
+                "systemctl stop mariadb || true".to_string(),
+                "systemctl stop mysql || true".to_string(),
+                // ensure directory exists and is owned by mysql
+                "mkdir -p /var/lib/mysql".to_string(),
+                "chown mysql:mysql /var/lib/mysql".to_string(),
+                // initialize as mysql user; prefer --user, fallback to runuser
+                format!(
+                    "( {bin} --initialize-insecure --user=mysql ) || runuser -u mysql -- {bin} --initialize-insecure",
+                    bin = flavor.init_bin()
+                ),
+            ])?;
     }
 
     // `/root/.my.cnf` lets subsequent `mysql -e ...` calls authenticate
