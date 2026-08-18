@@ -57,9 +57,9 @@ mod tests {
         assert_eq!(
             names,
             [
-                "Validating Installer Policies",
                 "Server Setup",
                 "Prerequisites",
+                "Validating Installer Policies",
                 "Redis Setup & Configurations",
                 "Configuring & Securing Database",
                 "PHP & PHP-FPM Configuration",
