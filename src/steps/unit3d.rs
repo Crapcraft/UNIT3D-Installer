@@ -248,8 +248,8 @@ fn setup(ctx: &mut Context) -> Result<()> {
 
     // Composer install + Bun build + artisan bootstrapping.
     let www_cmds = [
-        "composer install -q --prefer-dist --no-dev",
-        "composer dump-autoload --optimize",
+        "php -d opcache.preload='' $(command -v composer) install -q --prefer-dist --no-dev # composer install -q --prefer-dist --no-dev",
+        "php -d opcache.preload='' $(command -v composer) dump-autoload --optimize # composer dump-autoload --optimize",
         "bun install",
         "bun run build",
         "php artisan key:generate --force",
@@ -262,7 +262,7 @@ fn setup(ctx: &mut Context) -> Result<()> {
     ];
 
     for cmd in www_cmds {
-        let s = format!("sudo -u {web_user} bash -c 'cd {install_dir_s} && {cmd}'");
+        let s = format!("sudo -u {web_user} bash -lc \"cd {install_dir_s} && {cmd}\"");
         // G24: if running as web-user fails (Bun modules often can't write
         // outside the checkout as www-data), fall back to running as root
         // and re-fix permissions.
