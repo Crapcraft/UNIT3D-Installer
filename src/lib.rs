@@ -23,13 +23,10 @@ use clap::Parser;
 /// Entrypoint shared by the `main` binary.
 pub fn run() -> Result<()> {
     let args = cli::Args::parse();
-<<<<<<< HEAD
     // If running the binary in non-interactive mode with no explicit
     // `--config`, prefer a local example TOML when present so `--non-interactive`
     // can be exercised by operators. Do NOT do this inside tests (they call
     // `Context::build` directly) — keep test behavior deterministic.
-=======
->>>>>>> 0f07ff7 (feat: update repository reference and add support for debian (untested))
     let mut args_for_ctx = args.clone();
     if args_for_ctx.non_interactive && args_for_ctx.config.is_none() {
         if let Ok(cwd) = std::env::current_dir() {
