@@ -147,6 +147,12 @@ impl Step for PrerequisitesStep {
             ))?;
         }
 
+        // make sure php composer is available
+        ctx.run(&format!(
+            "command -v composer >/dev/null || {} install -y composer",
+            ctx.config.os.ubuntu.pkg_manager
+        ))?;
+
         // PECL Redis extension for PHP CLI. Ensure `pecl` is available by
         // installing `php-pear` if necessary, then run the installer.
         // Determine the PHP package base (e.g. "php8.5") from configured
