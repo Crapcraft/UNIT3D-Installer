@@ -89,8 +89,14 @@ pub fn configure(ctx: &mut Context) -> Result<()> {
             "systemctl stop mysql || true".to_string(),
             // ensure directory exists and is owned by mysql
             "mkdir -p /var/lib/mysql".to_string(),
-            "chown mysql:mysql /var/lib/mysql".to_string(),
-                match flavor {
+            // make sure `mysql` user exists; if not, try to create it
+            "id -u mysql >/dev/null 2>&1 || (groupadd -r mysql >/dev/null 2>&1 || true) && (useradd -r -g mysql -s /usr/sbin/nologin mysql >/dev/null 2>&1 || true)".to_string(),
+            // recursively set ownership and backup stale lock files that can
+            // block init if leftover by previous runs
+            "chown -R mysql:mysql /var/lib/mysql".to_string(),
+            "[ -e /var/lib/mysql/aria_log_control ] && mv /var/lib/mysql/aria_log_control /var/lib/mysql/aria_log_control.bak || true".to_string(),
+            "[ -e /var/lib/mysql/ibdata1 ] && mv /var/lib/mysql/ibdata1 /var/lib/mysql/ibdata1.bak || true".to_string(),
+            match flavor {
                     Flavor::MariaDb => format!(
                         "( {bin} --initialize-insecure --user=mysql ) || ( mariadb-install-db --user=mysql --datadir=/var/lib/mysql ) || runuser -u mysql -- mariadb-install-db --user=mysql --datadir=/var/lib/mysql || runuser -u mysql -- mysql_install_db --user=mysql --datadir=/var/lib/mysql",
                         bin = flavor.init_bin()
