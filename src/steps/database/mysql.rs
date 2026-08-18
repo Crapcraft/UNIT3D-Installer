@@ -137,21 +137,30 @@ pub fn configure(ctx: &mut Context) -> Result<()> {
     let root_pass = shell_quote(&ctx.config.app.dbrootpass);
     let bin = flavor.binary();
 
-    let critical: [String; 9] = [
+    let mut critical: Vec<String> = vec![
         format!("{bin} -e \"DROP USER IF EXISTS '{dbuser}'@'localhost'\""),
         format!("{bin} -e \"DROP DATABASE IF EXISTS {db}\""),
         format!("{bin} -e \"CREATE DATABASE {db}\""),
         format!("{bin} -e \"CREATE USER '{dbuser}'@'localhost' IDENTIFIED BY '{dbpass}'\""),
         format!("{bin} -e \"GRANT ALL PRIVILEGES ON {db} . * TO '{dbuser}'@'localhost'\""),
-        format!(
-            "{bin} -e \"ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '{root_pass}'\""
-        ),
+    ];
+
+    if matches!(flavor, Flavor::Mysql) {
+        critical.push(format!(
+            "{bin} -e \"ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '{root_pass}'\"",
+            bin = bin,
+            root_pass = root_pass
+        ));
+    }
+
+    critical.extend_from_slice(&[
         format!("{bin} -e \"DELETE FROM mysql.user WHERE User=''\""),
         format!(
             "{bin} -e \"DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1')\""
         ),
         format!("{bin} -e \"FLUSH PRIVILEGES\""),
-    ];
+    ]);
+
     ctx.run_all(critical)?;
 
     // Non-critical: drop the test database.
