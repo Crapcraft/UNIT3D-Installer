@@ -160,7 +160,7 @@ impl Step for PrerequisitesStep {
             .unwrap_or("php");
 
         let pecl_cmd = format!(
-            "command -v pecl >/dev/null || {} install -y php-pear {php_base}-dev; printf '\n' | pecl install redis 2>/dev/null",
+            "command -v pecl >/dev/null || {} install -y php-pear php-dev {php_base}-dev; printf '\n' | pecl install redis 2>/dev/null",
             ctx.config.os.ubuntu.pkg_manager
         );
         ctx.run(&pecl_cmd)?;
