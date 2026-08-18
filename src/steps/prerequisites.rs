@@ -150,7 +150,7 @@ impl Step for PrerequisitesStep {
         // PECL Redis extension for PHP CLI. Ensure `pecl` is available by
         // installing `php-pear` if necessary, then run the installer.
         let pecl_cmd = format!(
-            "command -v pecl >/dev/null || {} install -y php-pear; printf '\n' | pecl install redis 2>/dev/null",
+            "command -v pecl >/dev/null || {} install -y php-pear php-dev; printf '\n' | pecl install redis 2>/dev/null",
             ctx.config.os.ubuntu.pkg_manager
         );
         ctx.run(&pecl_cmd)?;
