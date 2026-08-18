@@ -157,13 +157,19 @@ impl Step for PrerequisitesStep {
             .iter()
             .find(|e| e.starts_with("php") && (e.ends_with("-fpm") || e.ends_with("-cli")))
             .and_then(|s| s.split('-').next())
-            .unwrap_or("php");
+            .unwrap_or("php")
+            .to_string();
 
-        let pecl_cmd = format!(
-            "command -v pecl >/dev/null || {} install -y php-pear php-dev {php_base}-dev; printf '\n' | pecl install redis 2>/dev/null",
-            ctx.config.os.ubuntu.pkg_manager
-        );
-        ctx.run(&pecl_cmd)?;
+        let php_version_part = php_base.trim_start_matches("php");
+        let phpize_ver = if php_version_part.is_empty() {
+            "phpize".to_string()
+        } else {
+            format!("phpize{}", php_version_part)
+        };
+
+        // prefer distro package if avail, otherwise install php-pear + php-dev + {php_base}-dev and run pecl
+        let pkg_check = format!("dpkg -s php-redis >/dev/null 2>&1 || dpkg -s {php_base}-redis >/dev/null 2>&1 || (command -v pecl >/dev/null || {pkg} install -y php-pear php-dev {php_base}-dev; if ! command -v phpize >/dev/null; then if command -v {phpize_ver} >/dev/null; then ln -sf $(command -v {phpize_ver}) /usr/bin/phpize; fi; fi; printf '\n' | pecl install redis 2>/dev/null)", pkg = ctx.config.os.ubuntu.pkg_manager, php_base = php_base, phpize_ver = phpize_ver);
+        ctx.run(&pkg_check)?;
 
         // UFW: allow Nginx Full + the configured chat echo port (must match
         // the port used by the nginx proxy block and laravel-echo-server).
