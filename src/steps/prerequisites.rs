@@ -90,27 +90,8 @@ impl Step for PrerequisitesStep {
             anyhow::bail!("Aborted ...");
         }
 
-        // Add the PHP repository, Node.js 24, Bun. The ondrej/php PPA only
-        // publishes packages for Jammy (22.04) and Noble (24.04); for Ubuntu
-        // 26.04 (Resolute) and newer, PHP packages are canonical at
-        // packages.sury.org/php/ (the PPA is being merged into it).
-        let mut cmds = php_repo_commands(ctx);
-        cmds.extend([
-            "apt-get -qq update".to_string(),
-            "curl -sL https://deb.nodesource.com/setup_24.x | sudo -E bash -".to_string(),
-            "curl -fsSL https://bun.sh/install | bash".to_string(),
-            "mv /root/.bun/bin/bun /usr/local/bin/ 2>/dev/null || true".to_string(),
-            "chmod a+x /usr/local/bin/bun 2>/dev/null || true".to_string(),
-            "npm install -g laravel-echo-server".to_string(),
-        ]);
-        ctx.run_all(cmds)?;
-
-<<<<<<< HEAD
-        // Install the listed apt packages, but avoid installing conflicting
-        // database server packages simultaneously. Only install the DB server
-        // selected via `app.db_driver`.
-=======
->>>>>>> 0f07ff7 (feat: update repository reference and add support for debian (untested))
+        // Determine the DB package to keep and the package list to install
+        // (we need unzip before installing bun)
         let db_pkg = match ctx.config.app.db_driver {
             crate::config::DbDriver::Mysql => "mysql-server",
             crate::config::DbDriver::MariaDb => "mariadb-server",
@@ -119,16 +100,8 @@ impl Step for PrerequisitesStep {
 
         let mut pkgs: Vec<String> = Vec::new();
         for pkg in software.packages.keys() {
-<<<<<<< HEAD
-            // Keep the selected DB package, but skip other DB server packages
-            // to prevent apt conflicts (mysql vs mariadb virtual providers).
-            if pkg == "mysql-server" || pkg == "mariadb-server" || pkg == "postgresql" {
-=======
-            if matches!(
-                pkg.as_str(),
-                "mysql-server" | "mariadb-server" | "postgresql"
-            ) {
->>>>>>> 0f07ff7 (feat: update repository reference and add support for debian (untested))
+            // Keep only the selected DB server package to avoid conflicts.
+            if matches!(pkg.as_str(), "mysql-server" | "mariadb-server" | "postgresql") {
                 if pkg == db_pkg {
                     pkgs.push(pkg.clone());
                 }
@@ -137,12 +110,26 @@ impl Step for PrerequisitesStep {
             }
         }
 
+        let mut cmds = php_repo_commands(ctx);
+        cmds.extend([
+            "apt-get -qq update".to_string(),
+            "curl -sL https://deb.nodesource.com/setup_24.x | sudo -E bash -".to_string(),
+        ]);
+        ctx.run_all(cmds)?;
+
         let install_cmd = format!(
             "{} install -y {}",
             ctx.config.os.ubuntu.pkg_manager,
             pkgs.join(" ")
         );
         ctx.run(&install_cmd)?;
+
+        ctx.run_all([
+            "curl -fsSL https://bun.sh/install | bash".to_string(),
+            "mv /root/.bun/bin/bun /usr/local/bin/ 2>/dev/null || true".to_string(),
+            "chmod a+x /usr/local/bin/bun 2>/dev/null || true".to_string(),
+            "npm install -g laravel-echo-server".to_string(),
+        ])?;
 
         let version_id = crate::system::detect()
             .map(|info| info.version_id)
