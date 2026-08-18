@@ -344,7 +344,7 @@ fn default_php_extensions() -> Vec<String> {
         "php8.5-bcmath",
         "php8.5-intl",
         "php8.5-soap",
-        "php8.5-opcache",
+        // `php8.5-opcache` package that may not exist in all repos.
         "php8.5-readline",
         "php8.5-common",
         "php8.5-igbinary",
@@ -732,7 +732,12 @@ mod tests {
         assert!(exts.contains(&"php8.5-fpm".to_string()));
         assert!(exts.contains(&"php8.5-mysql".to_string()));
         assert!(exts.contains(&"php8.5-pgsql".to_string()));
-        assert!(exts.contains(&"php8.5-opcache".to_string()));
+        // Some repositories provide opcache as a separate package, others
+        // bundle it in `php8.5-common`. Accept either signal as valid.
+        assert!(
+            exts.contains(&"php8.5-common".to_string())
+                || exts.iter().any(|e| e.contains("opcache"))
+        );
         // No duplicates.
         let mut sorted = exts.clone();
         sorted.sort();

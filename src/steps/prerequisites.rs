@@ -97,12 +97,54 @@ impl Step for PrerequisitesStep {
         ]);
         ctx.run_all(cmds)?;
 
+        // Probe package availability at runtime (skip during dry-run so
+        // unit tests/dry-run behaviour is unaffected). If a package has no
+        // candidate in the configured apt sources, omit it from the
+        // install list and warn the user.
+        if !ctx.dry_run {
+            let mut available = Vec::new();
+            let mut missing = Vec::new();
+            for pkg in &pkgs {
+                let check_cmd = format!(
+                    "apt-cache policy {} | awk -F: '/Candidate:/ {{print $2}}'",
+                    pkg
+                );
+                match ctx.exec.run(&check_cmd) {
+                    Ok(out) => {
+                        let cand = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        if cand.is_empty() || cand == "(none)" {
+                            missing.push(pkg.clone());
+                        } else {
+                            available.push(pkg.clone());
+                        }
+                    }
+                    Err(_) => {
+                        // Probe failure: conservatively assume package is
+                        // available to avoid false negatives caused by a
+                        // transient apt-cache error.
+                        available.push(pkg.clone());
+                    }
+                }
+            }
+            if !missing.is_empty() {
+                ctx.style.warning(&format!(
+                    "Some packages are not available and will be skipped: {}",
+                    missing.join(", ")
+                ));
+            }
+            pkgs = available;
+        }
+
         let install_cmd = format!(
             "{} install -y {}",
             ctx.config.os.ubuntu.pkg_manager,
             pkgs.join(" ")
         );
-        ctx.run(&install_cmd)?;
+        if !pkgs.is_empty() {
+            ctx.run(&install_cmd)?;
+        } else {
+            ctx.style.warning("No packages to install after availability probe.");
+        }
 
         ctx.run_all([
             "curl -fsSL https://bun.sh/install | bash".to_string(),
@@ -299,7 +341,13 @@ mod tests {
             "24.04",
             crate::config::SoftwareSection::default().php_extensions,
         );
-        assert!(exts.iter().any(|e| e.contains("opcache")));
+        // opcache may be provided as a separate package or bundled in
+        // `php8.5-common`; accept either as a sign that opcache will be
+        // available.
+        assert!(
+            exts.contains(&"php8.5-common".to_string())
+                || exts.iter().any(|e| e.contains("opcache"))
+        );
     }
 
     #[test]
