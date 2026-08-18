@@ -29,7 +29,7 @@ impl Step for PoliciesStep {
                 Ok(info) => {
                     if !info.distro.is_supported() {
                         bail!(
-                            "Unsupported OS: {} {}. This installer only supports Ubuntu LTS.",
+                            "Unsupported OS: {} {}. This installer supports Ubuntu LTS and Debian.",
                             info.id,
                             info.version_id
                         );

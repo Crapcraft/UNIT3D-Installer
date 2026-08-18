@@ -261,13 +261,23 @@ impl Default for SoftwareSection {
 }
 
 fn default_software() -> BTreeMap<String, String> {
+    default_software_for_db_driver(default_db_driver())
+}
+
+fn default_software_for_db_driver(db_driver: DbDriver) -> BTreeMap<String, String> {
     let mut m = BTreeMap::new();
+    let db_pkg = db_driver.package();
     let items = [
         ("build-essential", "Basic C/C++ Development Environment"),
         ("nginx", "Web Server"),
-        ("mariadb-server", "Database Server (MariaDB)"),
-        ("mysql-server", "Database Server (MySQL)"),
-        ("postgresql", "Database Server (PostgreSQL)"),
+        (
+            db_pkg,
+            match db_driver {
+                DbDriver::Mysql => "Database Server (MySQL)",
+                DbDriver::MariaDb => "Database Server (MariaDB)",
+                DbDriver::Postgres => "Database Server (PostgreSQL)",
+            },
+        ),
         ("supervisor", "A Process Control System"),
         ("nodejs", "JavaScript Run-time Environment (Includes npm)"),
         ("git", "Version Control"),
@@ -293,6 +303,27 @@ fn default_software() -> BTreeMap<String, String> {
         m.insert(k.to_string(), v.to_string());
     }
     m
+}
+
+fn software_packages_for_driver(
+    packages: &BTreeMap<String, String>,
+    db_driver: DbDriver,
+) -> BTreeMap<String, String> {
+    let db_pkg = db_driver.package();
+    let mut filtered = BTreeMap::new();
+    for (pkg, desc) in packages {
+        if matches!(
+            pkg.as_str(),
+            "mysql-server" | "mariadb-server" | "postgresql"
+        ) {
+            if pkg == db_pkg {
+                filtered.insert(pkg.clone(), desc.clone());
+            }
+        } else {
+            filtered.insert(pkg.clone(), desc.clone());
+        }
+    }
+    filtered
 }
 
 fn default_php_extensions() -> Vec<String> {
@@ -351,7 +382,17 @@ impl Config {
             if is_effectively_empty(&text) {
                 return Err(ConfigError::Empty(path.to_path_buf()));
             }
-            let cfg: Config = toml::from_str(&text)?;
+            let mut cfg: Config = toml::from_str(&text)?;
+            if !text.contains("[os.ubuntu.software]") {
+                let filtered = software_packages_for_driver(
+                    &cfg.os.ubuntu.software.packages,
+                    cfg.app.db_driver,
+                );
+                cfg.os.ubuntu.software = SoftwareSection {
+                    packages: filtered,
+                    php_extensions: cfg.os.ubuntu.software.php_extensions,
+                };
+            }
             cfg.validate()?;
             return Ok(cfg);
         }
@@ -677,6 +718,8 @@ mod tests {
         ] {
             assert!(sw.packages.contains_key(key), "missing package {key}");
         }
+        assert!(!sw.packages.contains_key("mysql-server"));
+        assert!(!sw.packages.contains_key("postgresql"));
         // Every package has a non-empty description.
         for (pkg, desc) in &sw.packages {
             assert!(!desc.is_empty(), "package {pkg} has empty description");
@@ -821,11 +864,21 @@ web_user = "ubuntu"
     }
 
     #[test]
-    fn software_packages_include_all_db_servers() {
+    fn software_packages_match_selected_db_driver() {
         let sw = SoftwareSection::default();
-        for key in ["mysql-server", "mariadb-server", "postgresql"] {
-            assert!(sw.packages.contains_key(key), "missing {key}");
-        }
+        assert!(sw.packages.contains_key("mariadb-server"));
+        assert!(!sw.packages.contains_key("mysql-server"));
+        assert!(!sw.packages.contains_key("postgresql"));
+
+        let mysql_sw = default_software_for_db_driver(DbDriver::Mysql);
+        assert!(mysql_sw.contains_key("mysql-server"));
+        assert!(!mysql_sw.contains_key("mariadb-server"));
+        assert!(!mysql_sw.contains_key("postgresql"));
+
+        let postgres_sw = default_software_for_db_driver(DbDriver::Postgres);
+        assert!(postgres_sw.contains_key("postgresql"));
+        assert!(!postgres_sw.contains_key("mariadb-server"));
+        assert!(!postgres_sw.contains_key("mysql-server"));
     }
 
     #[test]

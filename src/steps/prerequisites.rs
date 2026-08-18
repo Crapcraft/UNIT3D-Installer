@@ -5,6 +5,19 @@
 use crate::steps::{Context, Step};
 use anyhow::Result;
 
+fn sanitize_php_extensions_for_version(version_id: &str, exts: Vec<String>) -> Vec<String> {
+    let major: u32 = version_id
+        .split('.')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let mut filtered = exts;
+    if major >= 26 {
+        filtered.retain(|e| !e.contains("opcache"));
+    }
+    filtered
+}
+
 /// Shell commands that add the PHP apt repository for the detected Ubuntu
 /// release.
 ///
@@ -13,32 +26,28 @@ use anyhow::Result;
 /// but for 26.04 (Resolute) and newer the canonical source is
 /// `https://packages.sury.org/php/` (adding `ppa:ondrej/php` there yields a
 /// repo with no Release file, which aborts `apt-get update`).
-fn php_repo_commands(ctx: &Context) -> Vec<String> {
-    let version_id = if ctx.dry_run {
-        // Don't read the live box during a dry run; preview the legacy PPA
-        // path so the output is deterministic across machines.
-        String::new()
-    } else {
-        crate::system::detect()
-            .map(|info| info.version_id)
-            .unwrap_or_default()
-    };
-    let major: u32 = version_id
+fn php_repo_commands(_ctx: &Context) -> Vec<String> {
+    let info = crate::system::detect().ok();
+    let distro = info.as_ref().map(|i| i.distro);
+    let version = info.as_ref().map(|i| i.version_id.as_str()).unwrap_or("");
+    let major = version
         .split('.')
         .next()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    if major >= 26 {
+
+    if matches!(distro, Some(crate::system::os_detect::Distro::Ubuntu)) && major >= 26 {
         vec![
-            // Remove any stale `ppa:ondrej/php` source from an earlier
-            // failed run — it points at a non-existent release and aborts
-            // `apt-get update`.
             "rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources".to_string(),
-            "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb"
-                .to_string(),
+            "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb".to_string(),
             "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
-            "sh -c 'echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main\" > /etc/apt/sources.list.d/php.list'"
-                .to_string(),
+            "sh -c '. /etc/os-release; echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${VERSION_CODENAME:-$(lsb_release -sc 2>/dev/null || echo bookworm)} main\" > /etc/apt/sources.list.d/php.list'".to_string(),
+        ]
+    } else if matches!(distro, Some(crate::system::os_detect::Distro::Debian)) {
+        vec![
+            "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb".to_string(),
+            "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
+            "sh -c '. /etc/os-release; echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${VERSION_CODENAME:-bookworm} main\" > /etc/apt/sources.list.d/php.list'".to_string(),
         ]
     } else {
         vec!["add-apt-repository -y ppa:ondrej/php".to_string()]
@@ -59,7 +68,21 @@ impl Step for PrerequisitesStep {
             "We are preparing to install software on your server. Please review and confirm!",
         );
         ctx.style.sep();
-        for (pkg, desc) in &software.packages {
+        for (pkg, desc) in software.packages.iter().filter(|(pkg, _)| {
+            if matches!(
+                pkg.as_str(),
+                "mysql-server" | "mariadb-server" | "postgresql"
+            ) {
+                pkg.as_str()
+                    == match ctx.config.app.db_driver {
+                        crate::config::DbDriver::Mysql => "mysql-server",
+                        crate::config::DbDriver::MariaDb => "mariadb-server",
+                        crate::config::DbDriver::Postgres => "postgresql",
+                    }
+            } else {
+                true
+            }
+        }) {
             println!("* '{pkg}': {desc}");
         }
         ctx.style.sep();
@@ -82,9 +105,12 @@ impl Step for PrerequisitesStep {
         ]);
         ctx.run_all(cmds)?;
 
+<<<<<<< HEAD
         // Install the listed apt packages, but avoid installing conflicting
         // database server packages simultaneously. Only install the DB server
         // selected via `app.db_driver`.
+=======
+>>>>>>> 0f07ff7 (feat: update repository reference and add support for debian (untested))
         let db_pkg = match ctx.config.app.db_driver {
             crate::config::DbDriver::Mysql => "mysql-server",
             crate::config::DbDriver::MariaDb => "mariadb-server",
@@ -93,9 +119,16 @@ impl Step for PrerequisitesStep {
 
         let mut pkgs: Vec<String> = Vec::new();
         for pkg in software.packages.keys() {
+<<<<<<< HEAD
             // Keep the selected DB package, but skip other DB server packages
             // to prevent apt conflicts (mysql vs mariadb virtual providers).
             if pkg == "mysql-server" || pkg == "mariadb-server" || pkg == "postgresql" {
+=======
+            if matches!(
+                pkg.as_str(),
+                "mysql-server" | "mariadb-server" | "postgresql"
+            ) {
+>>>>>>> 0f07ff7 (feat: update repository reference and add support for debian (untested))
                 if pkg == db_pkg {
                     pkgs.push(pkg.clone());
                 }
@@ -111,12 +144,18 @@ impl Step for PrerequisitesStep {
         );
         ctx.run(&install_cmd)?;
 
-        // PHP extensions (php8.5-*) per the configured list.
-        let exts = software.php_extensions.join(" ");
-        ctx.run(&format!(
-            "{} install -y {}",
-            ctx.config.os.ubuntu.pkg_manager, exts
-        ))?;
+        let version_id = crate::system::detect()
+            .map(|info| info.version_id)
+            .unwrap_or_default();
+        let exts =
+            sanitize_php_extensions_for_version(&version_id, software.php_extensions.clone())
+                .join(" ");
+        if !exts.is_empty() {
+            ctx.run(&format!(
+                "{} install -y {}",
+                ctx.config.os.ubuntu.pkg_manager, exts
+            ))?;
+        }
 
         // PECL Redis extension for PHP CLI.
         ctx.run("printf '\\n' | pecl install redis 2>/dev/null")?;
@@ -242,6 +281,21 @@ mod tests {
     }
 
     #[test]
+    fn php_extensions_drop_opcache_on_26_and_newer() {
+        let exts = sanitize_php_extensions_for_version(
+            "26.04",
+            crate::config::SoftwareSection::default().php_extensions,
+        );
+        assert!(!exts.iter().any(|e| e.contains("opcache")));
+
+        let exts = sanitize_php_extensions_for_version(
+            "24.04",
+            crate::config::SoftwareSection::default().php_extensions,
+        );
+        assert!(exts.iter().any(|e| e.contains("opcache")));
+    }
+
+    #[test]
     fn php_repo_uses_sury_for_26_and_newer() {
         let cmds = php_repo_commands_for_version("26.04");
         assert!(
@@ -260,6 +314,17 @@ mod tests {
         assert!(!cmds.iter().any(|c| c.contains("ppa:ondrej/php")));
     }
 
+    #[test]
+    fn php_repo_uses_sury_for_debian() {
+        let cmds = php_repo_commands_for_version("12");
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("packages.sury.org/debsuryorg-archive-keyring.deb"))
+        );
+        assert!(cmds.iter().any(|c| c.contains("packages.sury.org/php/")));
+        assert!(!cmds.iter().any(|c| c.contains("ppa:ondrej/php")));
+    }
+
     fn php_repo_commands_for_version(version_id: &str) -> Vec<String> {
         let major: u32 = version_id
             .split('.')
@@ -274,6 +339,14 @@ mod tests {
                     .to_string(),
                 "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
                 "sh -c 'echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main\" > /etc/apt/sources.list.d/php.list'"
+                    .to_string(),
+            ]
+        } else if version_id == "12" || version_id.starts_with("12.") {
+            vec![
+                "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb"
+                    .to_string(),
+                "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
+                "sh -c '. /etc/os-release; echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${VERSION_CODENAME:-bookworm} main\" > /etc/apt/sources.list.d/php.list'"
                     .to_string(),
             ]
         } else {
