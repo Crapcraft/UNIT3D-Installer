@@ -149,8 +149,18 @@ impl Step for PrerequisitesStep {
 
         // PECL Redis extension for PHP CLI. Ensure `pecl` is available by
         // installing `php-pear` if necessary, then run the installer.
+        // Determine the PHP package base (e.g. "php8.5") from configured
+        // extensions so we can install the matching -dev package (provides
+        // `phpize`) if needed.
+        let php_base = software
+            .php_extensions
+            .iter()
+            .find(|e| e.starts_with("php") && (e.ends_with("-fpm") || e.ends_with("-cli")))
+            .and_then(|s| s.split('-').next())
+            .unwrap_or("php");
+
         let pecl_cmd = format!(
-            "command -v pecl >/dev/null || {} install -y php-pear php-dev; printf '\n' | pecl install redis 2>/dev/null",
+            "command -v pecl >/dev/null || {} install -y php-pear {php_base}-dev; printf '\n' | pecl install redis 2>/dev/null",
             ctx.config.os.ubuntu.pkg_manager
         );
         ctx.run(&pecl_cmd)?;
