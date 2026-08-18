@@ -105,12 +105,9 @@ impl Step for PrerequisitesStep {
         ]);
         ctx.run_all(cmds)?;
 
-<<<<<<< HEAD
         // Install the listed apt packages, but avoid installing conflicting
         // database server packages simultaneously. Only install the DB server
         // selected via `app.db_driver`.
-=======
->>>>>>> 0f07ff7 (feat: update repository reference and add support for debian (untested))
         let db_pkg = match ctx.config.app.db_driver {
             crate::config::DbDriver::Mysql => "mysql-server",
             crate::config::DbDriver::MariaDb => "mariadb-server",
@@ -119,16 +116,12 @@ impl Step for PrerequisitesStep {
 
         let mut pkgs: Vec<String> = Vec::new();
         for pkg in software.packages.keys() {
-<<<<<<< HEAD
             // Keep the selected DB package, but skip other DB server packages
             // to prevent apt conflicts (mysql vs mariadb virtual providers).
-            if pkg == "mysql-server" || pkg == "mariadb-server" || pkg == "postgresql" {
-=======
             if matches!(
                 pkg.as_str(),
                 "mysql-server" | "mariadb-server" | "postgresql"
             ) {
->>>>>>> 0f07ff7 (feat: update repository reference and add support for debian (untested))
                 if pkg == db_pkg {
                     pkgs.push(pkg.clone());
                 }
