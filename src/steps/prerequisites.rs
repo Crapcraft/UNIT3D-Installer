@@ -101,7 +101,10 @@ impl Step for PrerequisitesStep {
         let mut pkgs: Vec<String> = Vec::new();
         for pkg in software.packages.keys() {
             // Keep only the selected DB server package to avoid conflicts.
-            if matches!(pkg.as_str(), "mysql-server" | "mariadb-server" | "postgresql") {
+            if matches!(
+                pkg.as_str(),
+                "mysql-server" | "mariadb-server" | "postgresql"
+            ) {
                 if pkg == db_pkg {
                     pkgs.push(pkg.clone());
                 }
