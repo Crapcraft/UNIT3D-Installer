@@ -168,7 +168,12 @@ impl Step for PrerequisitesStep {
         };
 
         // prefer distro package if avail, otherwise install php-pear + php-dev + {php_base}-dev and run pecl
-        let pkg_check = format!("dpkg -s php-redis >/dev/null 2>&1 || dpkg -s {php_base}-redis >/dev/null 2>&1 || (command -v pecl >/dev/null || {pkg} install -y php-pear php-dev {php_base}-dev; if ! command -v phpize >/dev/null; then if command -v {phpize_ver} >/dev/null; then ln -sf $(command -v {phpize_ver}) /usr/bin/phpize; fi; fi; printf '\n' | pecl install redis 2>/dev/null)", pkg = ctx.config.os.ubuntu.pkg_manager, php_base = php_base, phpize_ver = phpize_ver);
+        let pkg_check = format!(
+            "dpkg -s php-redis >/dev/null 2>&1 || dpkg -s {php_base}-redis >/dev/null 2>&1 || (command -v pecl >/dev/null || {pkg} install -y php-pear php-dev {php_base}-dev; if ! command -v phpize >/dev/null; then if command -v {phpize_ver} >/dev/null; then ln -sf $(command -v {phpize_ver}) /usr/bin/phpize; fi; fi; printf '\n' | pecl install redis 2>/dev/null)",
+            pkg = ctx.config.os.ubuntu.pkg_manager,
+            php_base = php_base,
+            phpize_ver = phpize_ver
+        );
         ctx.run(&pkg_check)?;
 
         // UFW: allow Nginx Full + the configured chat echo port (must match
