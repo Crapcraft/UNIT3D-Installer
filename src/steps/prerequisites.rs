@@ -23,29 +23,12 @@ fn sanitize_php_extensions_for_version(version_id: &str, exts: Vec<String>) -> V
 /// supported distro matrix instead of depending on distro-specific ondrej
 /// package availability.
 fn php_repo_commands(_ctx: &Context) -> Vec<String> {
-    let info = crate::system::detect().ok();
-    let distro = info.as_ref().map(|i| i.distro);
-    let version = info.as_ref().map(|i| i.version_id.as_str()).unwrap_or("");
-    let major = version
-        .split('.')
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-
-    if matches!(
-        distro,
-        Some(crate::system::os_detect::Distro::Ubuntu | crate::system::os_detect::Distro::Debian)
-    ) || major >= 20
-    {
-        vec![
-            "rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources".to_string(),
-            "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb".to_string(),
-            "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
-            "sh -c '. /etc/os-release; echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${VERSION_CODENAME:-$(lsb_release -sc 2>/dev/null || echo bookworm)} main\" > /etc/apt/sources.list.d/php.list'".to_string(),
-        ]
-    } else {
-        vec!["add-apt-repository -y ppa:ondrej/php".to_string()]
-    }
+    vec![
+        "rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources".to_string(),
+        "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb".to_string(),
+        "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
+        "sh -c '. /etc/os-release; echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${VERSION_CODENAME:-$(lsb_release -sc 2>/dev/null || echo bookworm)} main\" > /etc/apt/sources.list.d/php.list'".to_string(),
+    ]
 }
 
 pub struct PrerequisitesStep;
@@ -229,7 +212,7 @@ mod tests {
         let cmds = cmds.lock().unwrap();
         assert!(
             cmds.iter()
-                .any(|c| c.contains("add-apt-repository -y ppa:ondrej/php"))
+                .any(|c| c.contains("packages.sury.org/debsuryorg-archive-keyring.deb"))
         );
         assert!(cmds.iter().any(|c| c.contains("setup_24.x")));
         assert!(cmds.iter().any(|c| c.contains("bun.sh/install")));

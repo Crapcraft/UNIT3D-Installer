@@ -138,7 +138,7 @@ fn prerequisites_runs_pecl_and_moves_bun() {
     assert!(exec.any("pecl install redis"));
     assert!(exec.any("mv /root/.bun/bin/bun /usr/local/bin/"));
     assert!(exec.any("chmod a+x /usr/local/bin/bun"));
-    assert!(exec.any("add-apt-repository -y ppa:ondrej/php"));
+    assert!(exec.any("packages.sury.org/debsuryorg-archive-keyring.deb"));
 }
 
 #[test]
