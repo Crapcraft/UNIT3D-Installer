@@ -143,7 +143,8 @@ impl Step for PrerequisitesStep {
         if !pkgs.is_empty() {
             ctx.run(&install_cmd)?;
         } else {
-            ctx.style.warning("No packages to install after availability probe.");
+            ctx.style
+                .warning("No packages to install after availability probe.");
         }
 
         ctx.run_all([
