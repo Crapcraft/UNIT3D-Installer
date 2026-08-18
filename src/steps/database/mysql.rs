@@ -86,7 +86,10 @@ pub fn configure(ctx: &mut Context) -> Result<()> {
         ctx.run_all([
             "mkdir -p /var/lib/mysql".to_string(),
             "chown mysql:mysql /var/lib/mysql".to_string(),
-            format!("{} --initialize-insecure", flavor.init_bin()),
+            format!(
+                "( {bin} --initialize-insecure --user=mysql ) || runuser -u mysql -- {bin} --initialize-insecure",
+                bin = flavor.init_bin()
+            ),
         ])?;
     }
 
