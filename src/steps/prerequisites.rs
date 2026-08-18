@@ -18,14 +18,10 @@ fn sanitize_php_extensions_for_version(version_id: &str, exts: Vec<String>) -> V
     filtered
 }
 
-/// Shell commands that add the PHP apt repository for the detected Ubuntu
-/// release.
-///
-/// The ondrej/php PPA is being merged into packages.sury.org/php. For
-/// Ubuntu 22.04 (Jammy) and 24.04 (Noble) the PPA still publishes packages,
-/// but for 26.04 (Resolute) and newer the canonical source is
-/// `https://packages.sury.org/php/` (adding `ppa:ondrej/php` there yields a
-/// repo with no Release file, which aborts `apt-get update`).
+/// Shell commands that add the official Sury PHP repository for the detected
+/// Ubuntu/Debian release. This keeps PHP 8.5 installs consistent across the
+/// supported distro matrix instead of depending on distro-specific ondrej
+/// package availability.
 fn php_repo_commands(_ctx: &Context) -> Vec<String> {
     let info = crate::system::detect().ok();
     let distro = info.as_ref().map(|i| i.distro);
@@ -36,18 +32,16 @@ fn php_repo_commands(_ctx: &Context) -> Vec<String> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
-    if matches!(distro, Some(crate::system::os_detect::Distro::Ubuntu)) && major >= 26 {
+    if matches!(
+        distro,
+        Some(crate::system::os_detect::Distro::Ubuntu | crate::system::os_detect::Distro::Debian)
+    ) || major >= 20
+    {
         vec![
             "rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources".to_string(),
             "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb".to_string(),
             "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
             "sh -c '. /etc/os-release; echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${VERSION_CODENAME:-$(lsb_release -sc 2>/dev/null || echo bookworm)} main\" > /etc/apt/sources.list.d/php.list'".to_string(),
-        ]
-    } else if matches!(distro, Some(crate::system::os_detect::Distro::Debian)) {
-        vec![
-            "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb".to_string(),
-            "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
-            "sh -c '. /etc/os-release; echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${VERSION_CODENAME:-bookworm} main\" > /etc/apt/sources.list.d/php.list'".to_string(),
         ]
     } else {
         vec!["add-apt-repository -y ppa:ondrej/php".to_string()]
@@ -285,20 +279,28 @@ mod tests {
     }
 
     #[test]
-    fn php_repo_legacy_ppa_for_24_and_below() {
-        // Jammy/Noble still get the legacy PPA.
+    fn php_repo_uses_sury_for_supported_ubuntu_releases() {
         assert_eq!(
             php_repo_commands_for_version("24.04"),
-            vec!["add-apt-repository -y ppa:ondrej/php"]
+            vec![
+                "rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources".to_string(),
+                "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb".to_string(),
+                "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
+                "sh -c '. /etc/os-release; echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${VERSION_CODENAME:-$(lsb_release -sc 2>/dev/null || echo bookworm)} main\" > /etc/apt/sources.list.d/php.list'".to_string(),
+            ]
         );
         assert_eq!(
             php_repo_commands_for_version("22.04.3"),
-            vec!["add-apt-repository -y ppa:ondrej/php"]
+            vec![
+                "rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources".to_string(),
+                "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb".to_string(),
+                "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
+                "sh -c '. /etc/os-release; echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${VERSION_CODENAME:-$(lsb_release -sc 2>/dev/null || echo bookworm)} main\" > /etc/apt/sources.list.d/php.list'".to_string(),
+            ]
         );
-        // Unknown/empty version falls back to the legacy PPA too.
         assert_eq!(
             php_repo_commands_for_version(""),
-            vec!["add-apt-repository -y ppa:ondrej/php"]
+            vec!["add-apt-repository -y ppa:ondrej/php".to_string()]
         );
     }
 
@@ -318,22 +320,16 @@ mod tests {
     }
 
     #[test]
-    fn php_repo_uses_sury_for_26_and_newer() {
-        let cmds = php_repo_commands_for_version("26.04");
-        assert!(
-            cmds.iter()
-                .any(|c| c.contains("packages.sury.org/debsuryorg-archive-keyring.deb"))
-        );
-        assert!(
-            cmds.iter()
-                .any(|c| c.contains("dpkg -i /tmp/debsuryorg-archive-keyring.deb"))
-        );
-        assert!(cmds.iter().any(|c| c.contains("packages.sury.org/php/")
-            && c.contains("signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg")));
-        // Stale ondrej PPA sources from an earlier run must be removed.
-        assert!(cmds.iter().any(|c| c.contains("ondrej-ubuntu-php-*.list")));
-        // The PPA must never be used on 26.04.
-        assert!(!cmds.iter().any(|c| c.contains("ppa:ondrej/php")));
+    fn php_repo_uses_sury_for_supported_ubuntu_and_debian() {
+        for version in ["20.04", "22.04", "24.04", "26.04", "12"] {
+            let cmds = php_repo_commands_for_version(version);
+            assert!(
+                cmds.iter()
+                    .any(|c| c.contains("packages.sury.org/debsuryorg-archive-keyring.deb"))
+            );
+            assert!(cmds.iter().any(|c| c.contains("packages.sury.org/php/")));
+            assert!(!cmds.iter().any(|c| c.contains("ppa:ondrej/php")));
+        }
     }
 
     #[test]
@@ -353,22 +349,14 @@ mod tests {
             .next()
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
-        if major >= 26 {
+        if version_id == "12" || version_id.starts_with("12.") || major >= 20 {
             vec![
                 "rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources"
                     .to_string(),
                 "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb"
                     .to_string(),
                 "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
-                "sh -c 'echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main\" > /etc/apt/sources.list.d/php.list'"
-                    .to_string(),
-            ]
-        } else if version_id == "12" || version_id.starts_with("12.") {
-            vec![
-                "curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb"
-                    .to_string(),
-                "dpkg -i /tmp/debsuryorg-archive-keyring.deb".to_string(),
-                "sh -c '. /etc/os-release; echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${VERSION_CODENAME:-bookworm} main\" > /etc/apt/sources.list.d/php.list'"
+                "sh -c '. /etc/os-release; echo \"deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${VERSION_CODENAME:-$(lsb_release -sc 2>/dev/null || echo bookworm)} main\" > /etc/apt/sources.list.d/php.list'"
                     .to_string(),
             ]
         } else {

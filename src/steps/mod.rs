@@ -67,6 +67,7 @@ mod tests {
                 "UNIT3D-Community-Edition Settings and Configuration",
                 "Meilisearch Setup & Configuration",
                 "Finalizing Install (credentials file)",
+                ""
             ]
         );
     }
