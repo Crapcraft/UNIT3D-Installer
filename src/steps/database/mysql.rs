@@ -90,18 +90,15 @@ pub fn configure(ctx: &mut Context) -> Result<()> {
             // ensure directory exists and is owned by mysql
             "mkdir -p /var/lib/mysql".to_string(),
             "chown mysql:mysql /var/lib/mysql".to_string(),
-                {
-                    let init_cmd = match flavor {
-                        Flavor::MariaDb => format!(
-                            "( {bin} --initialize-insecure --user=mysql ) || ( mariadb-install-db --user=mysql --datadir=/var/lib/mysql ) || runuser -u mysql -- mariadb-install-db --user=mysql --datadir=/var/lib/mysql || runuser -u mysql -- mysql_install_db --user=mysql --datadir=/var/lib/mysql",
-                            bin = flavor.init_bin()
-                        ),
-                        Flavor::Mysql => format!(
-                            "( {bin} --initialize-insecure --user=mysql ) || runuser -u mysql -- {bin} --initialize-insecure",
-                            bin = flavor.init_bin()
-                        ),
-                    };
-                    init_cmd
+                match flavor {
+                    Flavor::MariaDb => format!(
+                        "( {bin} --initialize-insecure --user=mysql ) || ( mariadb-install-db --user=mysql --datadir=/var/lib/mysql ) || runuser -u mysql -- mariadb-install-db --user=mysql --datadir=/var/lib/mysql || runuser -u mysql -- mysql_install_db --user=mysql --datadir=/var/lib/mysql",
+                        bin = flavor.init_bin()
+                    ),
+                    Flavor::Mysql => format!(
+                        "( {bin} --initialize-insecure --user=mysql ) || runuser -u mysql -- {bin} --initialize-insecure",
+                        bin = flavor.init_bin()
+                    ),
                 },
         ])?;
     }
