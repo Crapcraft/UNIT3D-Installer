@@ -270,13 +270,24 @@ fn setup(ctx: &mut Context) -> Result<()> {
         // G24: if running as web-user fails (Bun modules often can't write
         // outside the checkout as www-data), fall back to running as root
         // and re-fix permissions.
-        if ctx.run(&s).is_err()
+        let res = ctx.run(&s);
+        if res.is_err()
             && (cmd.starts_with("bun") || cmd.starts_with("composer") || cmd.starts_with("npm"))
         {
             ctx.style
                 .warning(&format!("{cmd} as {web_user} failed — retrying as root"));
             ctx.run(&format!("bash -c 'cd {install_dir_s} && {cmd}'"))?;
             ctx.run(&format!("chown -R {web_user}:{web_user} {install_dir_s}"))?;
+        } else if let Err(e) = res {
+            // Non-retryable command (php artisan migrate, key:generate, …)
+            // failed and was NOT retried — the install is broken from here
+            // on (e.g. migrate failing leaves the DB with no tables and
+            // every page 500s). Abort loudly instead of printing success.
+            anyhow::bail!(
+                "command failed: {cmd}\n{e}\n\
+                 the site will not work in this state — fix the error above \
+                 and re-run the installer"
+            );
         }
     }
     let preload_path = install_dir.join("preload.php");
