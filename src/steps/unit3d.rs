@@ -250,6 +250,10 @@ fn setup(ctx: &mut Context) -> Result<()> {
     let www_cmds = [
         "php -d opcache.preload='' $(command -v composer) install -q --prefer-dist --no-dev # composer install -q --prefer-dist --no-dev",
         "php -d opcache.preload='' $(command -v composer) dump-autoload --optimize # composer dump-autoload --optimize",
+        // livewire, joypixels, and lavarel-assets needed for login
+        "php artisan vendor:publish --force --tag=livewire:assets --ansi",
+        "php artisan vendor:publish --tag=public --provider=\"hdvinnie\\LaravelJoyPixels\\LaravelJoyPixelsServiceProvider\"",
+        "php artisan vendor:publish --tag=laravel-assets --ansi --force",
         "bun install",
         "bun run build",
         "php artisan key:generate --force",
@@ -275,6 +279,17 @@ fn setup(ctx: &mut Context) -> Result<()> {
             ctx.run(&format!("chown -R {web_user}:{web_user} {install_dir_s}"))?;
         }
     }
+    let preload_path = install_dir.join("preload.php");
+    let preload_path_s = preload_path.display().to_string();
+    let ensure_preload = format!(
+        "if [ ! -f {preload} ]; then echo '<?php // opcache preload placeholder' > {preload} && chown {web_user}:{web_user} {preload} && chmod 0644 {preload}; fi",
+        preload = preload_path_s,
+        web_user = web_user
+    );
+    // run as root
+    ctx.run(&format!("bash -lc \"{ensure}\"", ensure = ensure_preload))?;
+    // if it fails, dont stop installer
+    ctx.run("systemctl restart php8.5-fpm || true")?;
 
     ctx.style.info("UNIT3D installed successfully");
     Ok(())
