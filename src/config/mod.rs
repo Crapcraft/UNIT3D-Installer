@@ -99,6 +99,8 @@ pub struct AppSection {
 
     #[serde(default = "default_echo_port")]
     pub echo_port: u16,
+    #[serde(default = "default_ssh_port")]
+    pub ssh_port: u16,
     #[serde(default)]
     pub tmdb_key: String,
     #[serde(default)]
@@ -128,6 +130,7 @@ impl Default for AppSection {
             mail_password: String::new(),
             mail_from_name: String::new(),
             echo_port: default_echo_port(),
+            ssh_port: default_ssh_port(),
             tmdb_key: String::new(),
             meilisearch_key: String::new(),
         }
@@ -157,6 +160,9 @@ fn default_mail_port() -> String {
 }
 fn default_echo_port() -> u16 {
     8443
+}
+fn default_ssh_port() -> u16 {
+    22
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -418,6 +424,11 @@ impl Config {
         if self.app.echo_port == 0 {
             return Err(ConfigError::Invalid(
                 "app.echo_port must be a non-zero TCP port (1-65535)".to_string(),
+            ));
+        }
+        if self.app.ssh_port == 0 {
+            return Err(ConfigError::Invalid(
+                "app.ssh_port must be a non-zero TCP port (1-65535)".to_string(),
             ));
         }
         // Database name / user flow into `mysql -e` and `psql` strings.
@@ -755,6 +766,7 @@ mod tests {
         assert_eq!(cfg.unit3d.tag, "v9.2.0");
         assert_eq!(cfg.unit3d.min_php_version, "8.5");
         assert_eq!(cfg.app.echo_port, 8443);
+        assert_eq!(cfg.app.ssh_port, 22);
         assert!(cfg.app.ssl);
         assert_eq!(cfg.os.ubuntu.web_user, "www-data");
         assert_eq!(cfg.os.ubuntu.install_dir, PathBuf::from("/var/www/html"));
@@ -922,6 +934,24 @@ web_user = "ubuntu"
         cfg.app.echo_port = 0;
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("echo_port"));
+    }
+
+    #[test]
+    fn toml_roundtrip_sets_ssh_port() {
+        let cfg: Config = toml::from_str("[app]\nssh_port = 2222\n").unwrap();
+        assert_eq!(cfg.app.ssh_port, 2222);
+        // Default is 22 when unset.
+        let cfg: Config = toml::from_str("[app]\nhostname = \"tracker.example.com\"\n").unwrap();
+        assert_eq!(cfg.app.ssh_port, 22);
+    }
+
+    #[test]
+    fn validate_rejects_zero_ssh_port() {
+        let mut cfg = Config::default();
+        cfg.app.hostname = "tracker.example.com".to_string();
+        cfg.app.ssh_port = 0;
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("ssh_port"));
     }
 
     #[test]
