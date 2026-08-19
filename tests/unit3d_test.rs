@@ -42,6 +42,10 @@ fn unit3d_installs_dependencies_and_bootstraps() {
     // Composer + Bun.
     assert!(exec.any("composer install -q --prefer-dist --no-dev"));
     assert!(exec.any("composer dump-autoload --optimize"));
+    //  Fortify, Livewire, JoyPixels, Laravel assets all required for login routes
+    assert!(exec.any("php artisan vendor:publish --force --tag=livewire:assets --ansi"));
+    assert!(exec.any("php artisan vendor:publish --tag=public --provider=\"hdvinnie\\LaravelJoyPixels\\LaravelJoyPixelsServiceProvider\""));
+    assert!(exec.any("php artisan vendor:publish --tag=laravel-assets --ansi --force"));
     assert!(exec.any("bun install"));
     assert!(exec.any("bun run build"));
     // Artisan bootstrapping (G15/G17).
