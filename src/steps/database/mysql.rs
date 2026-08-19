@@ -124,7 +124,11 @@ pub fn configure(ctx: &mut Context) -> Result<()> {
     ctx.run_all([
         "mkdir -p /var/run/mysqld".to_string(),
         "chown mysql:mysql /var/run/mysqld".to_string(),
-        "chmod -R 755 /var/run/mysqld".to_string(),
+        // NOTE: never `chmod -R` here. Recursing would also hit the live
+        // `mysqld.sock` (present on re-installs) — a unix socket needs write
+        // permission to connect(), so a 755 socket locks out every non-root
+        // client (www-data/PHP-FPM) with SQLSTATE[HY000] [2002] Permission
+        // denied. The directory itself is already 755 from mkdir.
         format!("update-rc.d {} defaults", flavor.service_name()),
         format!("service {} start", flavor.service_name()),
         format!(
