@@ -250,6 +250,10 @@ fn setup(ctx: &mut Context) -> Result<()> {
     let www_cmds = [
         "php -d opcache.preload='' $(command -v composer) install -q --prefer-dist --no-dev # composer install -q --prefer-dist --no-dev",
         "php -d opcache.preload='' $(command -v composer) dump-autoload --optimize # composer dump-autoload --optimize",
+        // livewire, joypixels, and lavarel-assets needed for login
+        "php artisan vendor:publish --force --tag=livewire:assets --ansi",
+        "php artisan vendor:publish --tag=public --provider=\"hdvinnie\\LaravelJoyPixels\\LaravelJoyPixelsServiceProvider\"",
+        "php artisan vendor:publish --tag=laravel-assets --ansi --force",
         "bun install",
         "bun run build",
         "php artisan key:generate --force",
