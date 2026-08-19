@@ -279,6 +279,17 @@ fn setup(ctx: &mut Context) -> Result<()> {
             ctx.run(&format!("chown -R {web_user}:{web_user} {install_dir_s}"))?;
         }
     }
+    let preload_path = install_dir.join("preload.php");
+    let preload_path_s = preload_path.display().to_string();
+    let ensure_preload = format!(
+        "if [ ! -f {preload} ]; then echo '<?php // opcache preload placeholder' > {preload} && chown {web_user}:{web_user} {preload} && chmod 0644 {preload}; fi",
+        preload = preload_path_s,
+        web_user = web_user
+    );
+    // run as root
+    ctx.run(&format!("bash -lc \"{ensure}\"", ensure = ensure_preload))?;
+    // if it fails, dont stop installer
+    ctx.run("systemctl restart php8.5-fpm || true")?;
 
     ctx.style.info("UNIT3D installed successfully");
     Ok(())
