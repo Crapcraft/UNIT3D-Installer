@@ -30,6 +30,7 @@ dbuser         = "unit3d"
 # dbrootpass     = ""            # required for MySQL/MariaDB (set non-interactively)
 
 echo_port      = 8443
+ssh_port       = 22                 # SSH port UFW will allow (must match sshd_config)
 
 mail_driver    = "smtp"
 mail_host      = ""
