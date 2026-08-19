@@ -23,6 +23,7 @@ impl Step for ServerSetupStep {
 
     fn handle(&self, ctx: &mut Context) -> Result<()> {
         server(ctx)?;
+        firewall(ctx)?;
         user(ctx)?;
         database(ctx)?;
         mail(ctx)?;
@@ -256,6 +257,30 @@ fn mail(ctx: &mut Context) -> Result<()> {
     Ok(())
 }
 
+fn firewall(ctx: &mut Context) -> Result<()> {
+    ctx.style.section("Firewall Settings");
+    let default = if ctx.config.app.ssh_port == 0 {
+        "22".to_string()
+    } else {
+        ctx.config.app.ssh_port.to_string()
+    };
+    let port = ctx.prompter.text(
+        "SSH Port to allow through UFW (press Enter for 22)",
+        &default,
+    )?;
+    if let Ok(p) = port.parse::<u16>() {
+        ctx.config.app.ssh_port = p;
+    } else if ctx.config.app.ssh_port == 0 {
+        ctx.config.app.ssh_port = 22;
+    }
+    ctx.style.warning(
+        "This must match the port your sshd is actually listening on \
+         (check `Port` in /etc/ssh/sshd_config), or you may lock \
+         yourself out once the firewall is enabled.",
+    );
+    Ok(())
+}
+
 fn chat(ctx: &mut Context) -> Result<()> {
     ctx.style.section("Chat Settings");
     let default = if ctx.config.app.echo_port == 0 {
@@ -414,6 +439,36 @@ mod tests {
             ctx.config.app.hostname,
             "tracker.example.com;touch /tmp/pwn"
         );
+    }
+
+    #[test]
+    fn firewall_prompt_defaults_to_22_when_blank() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.ssh_port = 0;
+        firewall(&mut ctx).unwrap();
+        // Non-interactive returns default "22", parsed to u16.
+        assert_eq!(ctx.config.app.ssh_port, 22);
+    }
+
+    #[test]
+    fn firewall_prompt_keeps_custom_port() {
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.ssh_port = 2222;
+        firewall(&mut ctx).unwrap();
+        assert_eq!(ctx.config.app.ssh_port, 2222);
+    }
+
+    #[test]
+    fn firewall_prompt_falls_back_to_22_on_invalid_input_when_unset() {
+        // A non-numeric answer leaves the previous value intact; when the
+        // previous value is 0 (unset), fall back to the safe default 22.
+        let args = Args::parse_from(["unit3d-installer", "--non-interactive"]);
+        let mut ctx = Context::build(&args).unwrap();
+        ctx.config.app.ssh_port = 0;
+        firewall(&mut ctx).unwrap();
+        assert_eq!(ctx.config.app.ssh_port, 22);
     }
 
     #[test]

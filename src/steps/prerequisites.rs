@@ -202,10 +202,14 @@ impl Step for PrerequisitesStep {
         );
         ctx.run(&pkg_check)?;
 
-        // UFW: allow Nginx Full + the configured chat echo port (must match
-        // the port used by the nginx proxy block and laravel-echo-server).
+        // UFW: allow the SSH port FIRST so `ufw --force enable` (run later
+        // by the nginx step) can never lock the user out of the box, then
+        // Nginx Full + the configured chat echo port (must match the port
+        // used by the nginx proxy block and laravel-echo-server).
+        let ssh_port = ctx.config.app.ssh_port;
         let echo_port = ctx.config.app.echo_port;
         ctx.run_all([
+            format!("ufw allow {ssh_port}"),
             format!("ufw allow {echo_port}"),
             "ufw allow 'Nginx Full'".to_string(),
         ])?;
@@ -274,6 +278,21 @@ mod tests {
             cmds.iter().any(|c| c == "ufw allow 9001"),
             "ufw must open configured echo port 9001"
         );
+    }
+
+    #[test]
+    fn prerequisites_uses_configured_ssh_port() {
+        let (mut ctx, cmds) = prereq_context();
+        ctx.config.app.ssh_port = 2222;
+        PrerequisitesStep.handle(&mut ctx).unwrap();
+        let cmds = cmds.lock().unwrap();
+        assert!(
+            cmds.iter().any(|c| c == "ufw allow 2222"),
+            "ufw must open configured SSH port 2222"
+        );
+        // The SSH rule must be emitted before the firewall is enabled later
+        // in the pipeline, and the default port 22 must not also sneak in.
+        assert!(!cmds.iter().any(|c| c == "ufw allow 22"));
     }
 
     #[test]
