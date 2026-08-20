@@ -258,6 +258,10 @@ fn setup(ctx: &mut Context) -> Result<()> {
         "bun run build",
         "php artisan key:generate --force",
         "php artisan migrate --seed --force",
+        // Upstream UserSeeder pins the owner to group_id 10 (Trustee in some
+        // group orders) — re-assign the seeded owner to the real Owner group.
+        // Inner quotes are backslash-escaped so they survive bash -lc "...".
+        "php artisan tinker --execute='if (App\\Models\\Group::where(\\\"slug\\\", \\\"owner\\\")->exists()) { App\\Models\\User::where(\\\"username\\\", env(\\\"DEFAULT_OWNER_NAME\\\"))->first()?->update([\\\"group_id\\\" => App\\Models\\Group::where(\\\"slug\\\", \\\"owner\\\")->value(\\\"id\\\")]); }'",
         "php artisan auto:email-blacklist-update",
         "php artisan storage:link", // G15
         "php artisan config:cache", // G17
