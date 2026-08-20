@@ -281,6 +281,42 @@ fn unit3d_cron_is_idempotent() {
 }
 
 #[test]
+fn unit3d_step_fixes_owner_group_after_seed() {
+    let (mut ctx, exec) = unit3d_context();
+    Unit3dSetupStep.handle(&mut ctx).unwrap();
+
+    let cmds = exec.ran();
+    let migrate_idx = cmds
+        .iter()
+        .position(|c| c.contains("php artisan migrate --seed --force"))
+        .expect("migrate not run");
+    let fix_idx = cmds
+        .iter()
+        .position(|c| c.contains("tinker --execute"))
+        .expect("owner group fixup not run");
+    assert!(
+        fix_idx > migrate_idx,
+        "fixup must run after migrate --seed, got: {fix_idx} vs {migrate_idx}"
+    );
+
+    let fix = &cmds[fix_idx];
+    // The command is wrapped in `bash -lc "..."`, so inner quotes appear
+    // backslash-escaped in the recorded string.
+    assert!(
+        fix.contains("Group::where(\\\"slug\\\", \\\"owner\\\")"),
+        "fixup must look up the Owner group by slug, got: {fix}"
+    );
+    assert!(
+        fix.contains("DEFAULT_OWNER_NAME"),
+        "fixup must target the seeded owner via env, got: {fix}"
+    );
+    assert!(
+        fix.contains("group_id"),
+        "fixup must reassign group_id, got: {fix}"
+    );
+}
+
+#[test]
 fn unit3d_step_writes_env_in_dry_run() {
     let (mut ctx, exec) = unit3d_context();
     Unit3dSetupStep.handle(&mut ctx).unwrap();
